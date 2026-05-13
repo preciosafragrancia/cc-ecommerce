@@ -257,6 +257,14 @@ const MeusPedidos = () => {
                     </ul>
                   </div>
 
+                  {/* Frete */}
+                  {typeof order.frete === "number" && (
+                    <div className="flex justify-between text-sm mb-2">
+                      <span className="text-muted-foreground">Frete:</span>
+                      <span className="font-medium">R$ {order.frete.toFixed(2)}</span>
+                    </div>
+                  )}
+
                   {/* Total */}
                   <div className="pt-3 border-t">
                     <div className="font-bold text-lg">

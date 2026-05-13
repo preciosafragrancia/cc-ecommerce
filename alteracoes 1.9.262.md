@@ -1,18 +1,18 @@
 # ClickPrato  
 
-** Versão 1.9.261 - 12/05/2026  
+** Versão 1.9.262 - 13/05/2026  
 
-**URL Lovable**: https://preciosafragrancia.lovable.app
+**Projeto Usado: AUT8**
 
 ## Criado por CodClick  
 
 -----------------------------------------------------------------------------------------------------
 
 **Alteração:**  
-Colocar o foco no topo da pagina inicial após a finalização do pedido
+- Adicionado o valor de frete na página "Meus Pedidos"
 
 **Arquivos Alterados:**  
-src/pages/Checkout.tsx
+src/pages/MeusPedidos.tsx
 
 
 -----------------------------------------------------------------------------------------------------
