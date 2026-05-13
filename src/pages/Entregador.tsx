@@ -10,11 +10,12 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { updateOrder } from "@/services/orderService";
+import { Link } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 
 const Entregador = () => {
   const { toast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [allOrders, setAllOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -60,35 +61,6 @@ const Entregador = () => {
         setLoading(false);
       }
     );
-
-    return () => unsubscribe();
-  }, []);
-
-  // Query de debug para ver todos os pedidos do dia
-  useEffect(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-
-    const startTimestamp = Timestamp.fromDate(start);
-    const endTimestamp = Timestamp.fromDate(end);
-
-    const ordersRef = collection(db, "orders");
-    const allOrdersQuery = query(
-      ordersRef,
-      where("createdAt", ">=", startTimestamp),
-      where("createdAt", "<=", endTimestamp),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsubscribe = onSnapshot(allOrdersQuery, (snapshot) => {
-      const allOrdersData: Order[] = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Order[];
-      setAllOrders(allOrdersData);
-    });
 
     return () => unsubscribe();
   }, []);
@@ -152,15 +124,12 @@ const Entregador = () => {
     }).format(date);
   };
 
-  // Função para formatar itens com complementos
   const formatItems = (items: any[]) => {
     return items.map((item, index) => {
-      // Montar lista de variações
       let variationsText = "";
 
       if (item.selectedVariations && Array.isArray(item.selectedVariations)) {
         const variations: string[] = [];
-
         item.selectedVariations.forEach((group: any) => {
           if (group.variations && Array.isArray(group.variations)) {
             group.variations.forEach((variation: any) => {
@@ -169,7 +138,6 @@ const Entregador = () => {
             });
           }
         });
-
         if (variations.length > 0) {
           variationsText = " + " + variations.join(" + ");
         }
@@ -184,8 +152,17 @@ const Entregador = () => {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold mb-6">Pedidos em rota de entrega</h1>
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" asChild>
+            <Link to="/admin-dashboard">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <h1 className="text-2xl font-bold">Pedidos em Rota de Entrega</h1>
+        </div>
+      </div>
 
       {loading ? (
         <p className="text-gray-500">Carregando pedidos...</p>

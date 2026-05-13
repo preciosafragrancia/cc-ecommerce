@@ -56,9 +56,10 @@ interface OrderDetailsProps {
     cancellationReason?: string,
     paymentStatus?: "a_receber" | "recebido"
   ) => void;
+  onClose?: () => void;
 }
 
-const OrderDetails: React.FC<OrderDetailsProps> = ({ order, onUpdateStatus }) => {
+const OrderDetails: React.FC<OrderDetailsProps> = ({ order, onUpdateStatus, onClose }) => {
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
   const [isReasonDialogOpen, setIsReasonDialogOpen] = useState(false);
   const [cancellationReason, setCancellationReason] = useState("");
@@ -66,6 +67,7 @@ const OrderDetails: React.FC<OrderDetailsProps> = ({ order, onUpdateStatus }) =>
 
   // 🟢 Novo estado para o código curto
   const [shortCode, setShortCode] = useState<string | null>(null);
+  const [webhookStatusUrl, setWebhookStatusUrl] = useState<string | null>(null);
 
   // 🟢 Buscar código curto no Supabase quando o pedido carregar
   useEffect(() => {
@@ -92,6 +94,25 @@ const OrderDetails: React.FC<OrderDetailsProps> = ({ order, onUpdateStatus }) =>
 
     if (order?.id) fetchShortCode();
   }, [order.id]);
+
+  // 🟢 Buscar URL do webhook de status nas configurações
+  useEffect(() => {
+    const fetchWebhookUrl = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("configuracoes")
+          .select("valor")
+          .eq("chave", "webhook_status_pedido")
+          .maybeSingle();
+        if (!error && data?.valor) {
+          setWebhookStatusUrl(data.valor);
+        }
+      } catch (err) {
+        console.warn("⚠️ Erro ao buscar webhook de status:", err);
+      }
+    };
+    fetchWebhookUrl();
+  }, []);
 
   // Debug do pedido completo
   console.log("=== ORDER DETAILS DEBUG ===");
@@ -238,10 +259,18 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
 
     console.log("📦 Enviando payload do pedido para webhook n8n:", payload);
 
-    const response = await fetch("https://n8n-n8n-start.yh11mi.easypanel.host/webhook/status_pedido_PF", {
+    if (!webhookStatusUrl) {
+      console.warn("⚠️ Webhook de status não configurado. Pulando envio.");
+      return;
+    }
+
+    const { withComunicacaoMeta } = await import("@/utils/webhookPayload");
+    const enriched = await withComunicacaoMeta(payload);
+
+    const response = await fetch(webhookStatusUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(enriched),
     });
 
     if (!response.ok) {
@@ -407,127 +436,137 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
   });
 
   return (
-    <div className="space-y-6">
-      {/* Informações básicas do pedido */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <h3 className="text-sm font-medium text-gray-500">ID do Pedido</h3>
-          <p className="mt-1">
-            {shortCode ? (
-              <>
-                <span className="font-semibold text-lg">{shortCode}</span>
-                <span className="ml-2 text-xs text-gray-400">({order.id})</span>
-              </>
-            ) : (
-              order.id
-            )}
-          </p>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-500">Data do Pedido</h3>
-          <p className="mt-1">{formatDate(order.createdAt as string)}</p>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-500">Cliente</h3>
-          <p className="mt-1">{order.customerName}</p>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-500">Telefone</h3>
-          <p className="mt-1">{order.customerPhone}</p>
-        </div>
-        <div className="col-span-2">
-          <h3 className="text-sm font-medium text-gray-500">Endereço</h3>
-          <p className="mt-1">{order.address}</p>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-500">Forma de Pagamento</h3>
-          <p className="mt-1 font-medium">{translatePaymentMethod(order.paymentMethod)}</p>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-500">
-            {((order as any).discount && (order as any).discount > 0) || (order.frete && order.frete > 0) ? 'Resumo' : 'Total'}
-          </h3>
-          <div className="mt-1 space-y-1">
-            {/* Subtotal dos itens (sem desconto e sem frete) */}
-            {(((order as any).discount && (order as any).discount > 0) || (order.frete && order.frete > 0)) && (
-              <p className="text-sm text-gray-600">
-                Subtotal: R$ {(order.subtotal || (order.total + ((order as any).discount || 0) - (order.frete || 0))).toFixed(2)}
-              </p>
-            )}
-            
-            {/* Desconto */}
-            {(order as any).discount && (order as any).discount > 0 && (
-              <p className="text-sm text-green-600">
-                Desconto ({(order as any).couponCode}): - R$ {((order as any).discount).toFixed(2)}
-              </p>
-            )}
-            
-            {/* Frete */}
-            {order.frete !== undefined && order.frete !== null && order.frete === 0 ? (
-              <p className="text-sm text-green-600">
-                Frete: 🚚 Grátis!
-              </p>
-            ) : order.frete && order.frete > 0 ? (
-              <p className="text-sm text-blue-600">
-                Frete: + R$ {order.frete.toFixed(2)}
-              </p>
-            ) : null}
-            
-            <p className="font-semibold text-lg">Total: R$ {order.total.toFixed(2)}</p>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Coluna Esquerda: Detalhes + Status + Ações */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-semibold">Detalhes do Pedido</h2>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <div>
+            <h3 className="text-sm font-medium text-gray-500">ID do Pedido</h3>
+            <p className="mt-1">
+              {shortCode ? (
+                <>
+                  <span className="font-semibold text-lg">{shortCode}</span>
+                  <span className="ml-2 text-xs text-gray-400">({order.id})</span>
+                </>
+              ) : (
+                order.id
+              )}
+            </p>
           </div>
+          <div>
+            <h3 className="text-sm font-medium text-gray-500">Data do Pedido</h3>
+            <p className="mt-1">{formatDate(order.createdAt as string)}</p>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-gray-500">Cliente</h3>
+            <p className="mt-1">{order.customerName}</p>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-gray-500">Telefone</h3>
+            <p className="mt-1">{order.customerPhone}</p>
+          </div>
+          <div className="col-span-2">
+            <h3 className="text-sm font-medium text-gray-500">Endereço</h3>
+            <p className="mt-1">{order.address}</p>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-gray-500">Forma de Pagamento</h3>
+            <p className="mt-1 font-medium">{translatePaymentMethod(order.paymentMethod)}</p>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-gray-500">
+              {((order as any).discount && (order as any).discount > 0) || (order.frete && order.frete > 0) ? 'Resumo' : 'Total'}
+            </h3>
+            <div className="mt-1 space-y-1">
+              {(((order as any).discount && (order as any).discount > 0) || (order.frete && order.frete > 0)) && (
+                <p className="text-sm text-gray-600">
+                  Subtotal: R$ {(order.subtotal || (order.total + ((order as any).discount || 0) - (order.frete || 0))).toFixed(2)}
+                </p>
+              )}
+              {(order as any).discount && (order as any).discount > 0 && (
+                <p className="text-sm text-green-600">
+                  Desconto ({(order as any).couponCode}): - R$ {((order as any).discount).toFixed(2)}
+                </p>
+              )}
+              {order.frete !== undefined && order.frete !== null && order.frete === 0 ? (
+                <p className="text-sm text-green-600">Frete: 🚚 Grátis!</p>
+              ) : order.frete && order.frete > 0 ? (
+                <p className="text-sm text-blue-600">Frete: + R$ {order.frete.toFixed(2)}</p>
+              ) : null}
+              <p className="font-semibold text-lg">Total: R$ {order.total.toFixed(2)}</p>
+            </div>
+          </div>
+          {order.observations && (
+            <div className="col-span-2">
+              <h3 className="text-sm font-medium text-gray-500">Observações</h3>
+              <p className="mt-1">{order.observations}</p>
+            </div>
+          )}
         </div>
+
+        {/* Status + Ações */}
         <div>
-          <h3 className="text-sm font-medium text-gray-500">Status</h3>
-          <p className="mt-1">
-            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-sm ${getStatusColor(order.status)}`}>
+          <h3 className="text-md font-medium mb-2">Status</h3>
+          <div className="flex flex-wrap gap-2">
+            <span className={`inline-flex items-center gap-1 px-3 py-2 rounded-md text-sm ${getStatusColor(order.status)}`}>
               {getStatusIcon(order.status)}
               {translateStatus(order.status)}
             </span>
-          </p>
+            {nextStatusButtons}
+            <Button
+              variant="outline"
+              className="flex items-center gap-1"
+              onClick={() => printOrder(order)}
+            >
+              <Printer className="h-5 w-5" />
+              Imprimir
+            </Button>
+            {onClose && (
+              <Button variant="outline" onClick={onClose}>
+                Fechar
+              </Button>
+            )}
+          </div>
         </div>
-        {order.observations && (
-          <div className="col-span-2">
-            <h3 className="text-sm font-medium text-gray-500">Observações</h3>
-            <p className="mt-1">{order.observations}</p>
+
+        {/* Status de Pagamento */}
+        <div className="bg-blue-50 border border-blue-200 p-4 rounded-md">
+          <h3 className="text-md font-medium mb-3 text-blue-800">Status de Pagamento</h3>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-blue-600" />
+              <span className="font-medium">
+                Status: {order.paymentStatus === "recebido" ? "Recebido" : "A Receber"}
+              </span>
+            </div>
+            {order.paymentStatus !== "recebido" && (
+              <Button
+                onClick={() => handleUpdatePaymentStatus(order.id, "recebido")}
+                variant="default"
+                className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white"
+              >
+                <DollarSign className="h-4 w-4" />
+                Marcar como Recebido
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Motivo do cancelamento */}
+        {order.status === "cancelled" && (order.cancellationReason || cancellationReason) && (
+          <div className="bg-red-50 border border-red-200 p-3 rounded-md">
+            <div className="text-sm font-semibold text-red-700">Motivo do cancelamento:</div>
+            <div className="text-sm text-gray-800 mt-1">
+              {order.cancellationReason || cancellationReason}
+            </div>
           </div>
         )}
       </div>
 
-      {/* Status de Pagamento */}
-      <div className="bg-blue-50 border border-blue-200 p-4 rounded-md">
-        <h3 className="text-md font-medium mb-3 text-blue-800">Status de Pagamento</h3>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <DollarSign className="h-5 w-5 text-blue-600" />
-            <span className="font-medium">
-              Status: {order.paymentStatus === "recebido" ? "Recebido" : "A Receber"}
-            </span>
-          </div>
-          {order.paymentStatus !== "recebido" && (
-            <Button
-              onClick={() => handleUpdatePaymentStatus(order.id, "recebido")}
-              variant="default"
-              className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white"
-            >
-              <DollarSign className="h-4 w-4" />
-              Marcar como Recebido
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Motivo do cancelamento */}
-      {order.status === "cancelled" && (order.cancellationReason || cancellationReason) && (
-        <div className="bg-red-50 border border-red-200 p-3 rounded-md">
-          <div className="text-sm font-semibold text-red-700">Motivo do cancelamento:</div>
-          <div className="text-sm text-gray-800 mt-1">
-            {order.cancellationReason || cancellationReason}
-          </div>
-        </div>
-      )}
-
-      {/* Itens do pedido */}
-      <div>
+      {/* Coluna Direita: Itens do Pedido */}
+      <div className="lg:border-l lg:pl-6">
         <h3 className="text-md font-medium mb-2">Itens do Pedido</h3>
         <Table>
           <TableHeader>
@@ -542,7 +581,6 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
             {order.items.map((item, index) => (
               <React.Fragment key={index}>
                 <TableRow>
-                  {/* ITEM */}
                   <TableCell className="font-medium align-top w-[280px] min-w-[220px]">
                     <div className="font-semibold">
                       {item.name}
@@ -552,7 +590,6 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
                         </span>
                       )}
                     </div>
-                    {/* Variações */}
                     {item.selectedVariations && Array.isArray(item.selectedVariations) && item.selectedVariations.length > 0 ? (
                       <div className="mt-1">
                         {item.selectedVariations.map((group, groupIndex) => (
@@ -588,8 +625,7 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
                     ) : (
                       <div className="text-xs text-gray-500 italic mt-1">Sem variações</div>
                     )}
-                    
-                    {/* Borda Recheada */}
+
                     {item.selectedBorder && (
                       <div className="mt-1 pl-2 border-l-2 border-amber-300">
                         <div className="text-xs text-amber-700 font-medium">Borda Recheada:</div>
@@ -605,17 +641,14 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
                     )}
                   </TableCell>
 
-                  {/* PREÇO BASE */}
                   <TableCell className="align-top w-[100px]">
                     R$ {(item.price || 0).toFixed(2)}
                   </TableCell>
 
-                  {/* QUANTIDADE */}
                   <TableCell className="align-top w-[80px]">
                     {item.quantity}
                   </TableCell>
 
-                                    {/* SUBTOTAL */}
                   <TableCell className="align-top w-[120px] font-medium">
                     R$ {(item.subtotal ?? calculateItemSubtotal(item)).toFixed(2)}
                   </TableCell>
@@ -624,52 +657,26 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
             ))}
           </TableBody>
           <TableFooter>
-            {/* Subtotal */}
             {(order.frete && order.frete > 0) && (
               <TableRow>
-                <TableCell colSpan={3} className="text-right text-gray-600">
-                  Subtotal
-                </TableCell>
+                <TableCell colSpan={3} className="text-right text-gray-600">Subtotal</TableCell>
                 <TableCell className="text-gray-600">
                   R$ {(order.subtotal || (order.total - order.frete)).toFixed(2)}
                 </TableCell>
               </TableRow>
             )}
-            
-            {/* Frete */}
             {order.frete && order.frete > 0 && (
               <TableRow>
-                <TableCell colSpan={3} className="text-right text-blue-600">
-                  Frete
-                </TableCell>
-                <TableCell className="text-blue-600">
-                  + R$ {order.frete.toFixed(2)}
-                </TableCell>
+                <TableCell colSpan={3} className="text-right text-blue-600">Frete</TableCell>
+                <TableCell className="text-blue-600">+ R$ {order.frete.toFixed(2)}</TableCell>
               </TableRow>
             )}
-            
-            {/* Total */}
             <TableRow>
-              <TableCell colSpan={3} className="text-right font-semibold">
-                Total
-              </TableCell>
+              <TableCell colSpan={3} className="text-right font-semibold">Total</TableCell>
               <TableCell className="font-bold">R$ {order.total.toFixed(2)}</TableCell>
             </TableRow>
           </TableFooter>
         </Table>
-      </div>
-
-      {/* Botões de ação */}
-      <div className="flex flex-wrap gap-2">
-        {nextStatusButtons}
-        <Button
-          variant="outline"
-          className="flex items-center gap-1"
-          onClick={() => printOrder(order)}
-        >
-          <Printer className="h-5 w-5" />
-          Imprimir
-        </Button>
       </div>
 
       {/* Diálogo de confirmação: Entrega finalizada sem pagamento */}
@@ -694,8 +701,15 @@ const sendOrderStatusWebhook = async (orderData: Order & { cancellationReason?: 
             <Button
               onClick={() => {
                 setIsDeliveredConfirmOpen(false);
-                handleUpdatePaymentStatus(order.id, "recebido");
-                handleUpdateStatus(order.id, "delivered");
+                // Dispara um único webhook já com status=delivered e paymentStatus=recebido
+                const updatedOrder: Order = {
+                  ...order,
+                  status: "delivered",
+                  paymentStatus: "recebido",
+                };
+                sendOrderStatusWebhook(updatedOrder);
+                // Persiste a alteração no banco sem disparar webhooks adicionais
+                onUpdateStatus(order.id, "delivered", undefined, "recebido");
               }}
             >
               Marcar como recebido e finalizar

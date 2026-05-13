@@ -38,7 +38,7 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           />
         </div>
         <div className="p-6 pt-2">
-          <DialogHeader>
+          <DialogHeader className="text-left">
             <DialogTitle className="text-xl">{item.name}</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground mt-2 whitespace-pre-line">
               {item.description}
@@ -57,10 +57,10 @@ const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 {formatCurrency(item.price)}
               </span>
             </div>
-            <Button onClick={onAddToCart} size="sm">
-              <PlusCircle className="mr-1 h-4 w-4" />
-              Adicionar
-            </Button>
+<Button onClick={onAddToCart} size="sm" className="bg-green-600 hover:bg-green-700 text-white">
+  <PlusCircle className="mr-1 h-4 w-4" />
+  Adicionar
+</Button>
           </div>
         </div>
       </DialogContent>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useLayoutSettings } from "@/hooks/useLayoutSettings";
 import { MenuItem, Variation, SelectedVariationGroup, PizzaBorder } from "@/types/menu";
 import { useCart } from "@/contexts/CartContext";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,8 @@ interface MenuItemCardProps {
 
 const MenuItemCard = React.forwardRef<{ triggerClick: () => void }, MenuItemCardProps>(({ item }, ref) => {
   const { addToCart, addItem } = useCart();
+  const { settings } = useLayoutSettings();
+  const isTwoColumns = settings.layout_colunas_mobile === '2';
   const [isVariationDialogOpen, setIsVariationDialogOpen] = useState(false);
   const [isPizzaDialogOpen, setIsPizzaDialogOpen] = useState(false);
   const [isQuantityDialogOpen, setIsQuantityDialogOpen] = useState(false);
@@ -37,12 +40,14 @@ const MenuItemCard = React.forwardRef<{ triggerClick: () => void }, MenuItemCard
           const groupVariations: { [groupId: string]: Variation[] } = {};
 
           for (const group of item.variationGroups) {
-            groupVariations[group.id] = variations.filter(
-              (variation) =>
+            // Respect the order defined in group.variations (admin-defined order)
+            groupVariations[group.id] = group.variations
+              .map(varId => variations.find(v => v.id === varId))
+              .filter((variation): variation is Variation =>
+                !!variation &&
                 variation.available &&
-                group.variations.includes(variation.id) &&
                 variation.categoryIds.includes(item.category)
-            );
+              );
           }
 
           setGroups(groupVariations);
@@ -112,9 +117,9 @@ const MenuItemCard = React.forwardRef<{ triggerClick: () => void }, MenuItemCard
 
   return (
     <>
-      <div className="food-item bg-white rounded-lg overflow-hidden shadow-md p-4 flex flex-col" data-product-id={item.id}>
+      <div className="food-item bg-white rounded-lg overflow-hidden shadow-md p-3 sm:p-4 flex flex-col" data-product-id={item.id}>
         <div
-          className="h-48 overflow-hidden rounded-md mb-4 cursor-pointer"
+          className="aspect-[4/3] overflow-hidden rounded-md mb-3 cursor-pointer"
           onClick={() => {
             trackViewContent({
               id: item.id,
@@ -138,22 +143,22 @@ const MenuItemCard = React.forwardRef<{ triggerClick: () => void }, MenuItemCard
           />
         </div>
         <div className="flex-1">
-          <h3 className="text-lg font-bold mb-1">{item.name}</h3>
-          <p className="text-gray-600 text-sm mb-3 line-clamp-3">{item.description}</p>
+          <h3 className="text-sm sm:text-lg font-bold mb-1 line-clamp-2">{item.name}</h3>
+          <p className="text-gray-600 text-xs sm:text-sm mb-2 sm:mb-3 line-clamp-2 sm:line-clamp-3">{item.description}</p>
         </div>
-        <div className="flex justify-between items-center mt-2">
-          <div className="flex flex-col">
+        <div className={`flex items-center mt-2 ${isTwoColumns ? 'flex-col gap-2' : 'justify-between flex-row'}`}>
+          <div className="flex flex-col items-start">
             {item.freteGratis && <span className="text-xs font-semibold text-green-600 mb-1">🚚 Frete Grátis</span>}
             {item.priceFrom && <span className="text-xs text-gray-500 mb-1">a partir de</span>}
-            <span className="text-lg font-bold text-brand">{formatCurrency(item.price)}</span>
+            <span className={`font-bold text-brand ${isTwoColumns ? 'text-base' : 'text-base sm:text-2xl'}`}>{formatCurrency(item.price)}</span>
           </div>
           <Button
             onClick={handleButtonClick}
-            className="add-to-cart-btn"
+            className={`add-to-cart-btn ${isTwoColumns ? '!text-xs !px-2 !py-1 !min-h-0 !h-7 w-full' : ''}`}
             size="sm"
             disabled={loading || (item.hasVariations && Object.keys(groups).length === 0)}
           >
-            <PlusCircle className="mr-1 h-4 w-4" />
+            <PlusCircle className={`mr-1 ${isTwoColumns ? 'h-3 w-3' : 'h-4 w-4'}`} />
             Adicionar
           </Button>
         </div>
@@ -187,6 +192,7 @@ const MenuItemCard = React.forwardRef<{ triggerClick: () => void }, MenuItemCard
         isOpen={isQuantityDialogOpen}
         onClose={() => setIsQuantityDialogOpen(false)}
         onConfirm={handleQuantityConfirm}
+        onOpenPizzaCombination={() => setIsPizzaDialogOpen(true)}
       />
       <ProductDetailModal
         item={item}
@@ -195,6 +201,19 @@ const MenuItemCard = React.forwardRef<{ triggerClick: () => void }, MenuItemCard
         onAddToCart={() => {
           setIsDetailModalOpen(false);
           handleButtonClick();
+          trackViewContent({
+            id: item.id,
+            name: item.name,
+            price: item.price,
+            category: item.category,
+            tipo: item.tipo,
+            permiteCombinacao: item.permiteCombinacao,
+          });
+          if (item.hasVariations && item.variationGroups && item.variationGroups.length > 0) {
+            setIsVariationDialogOpen(true);
+          } else {
+            setIsQuantityDialogOpen(true);
+          }	   
         }}
       />
     </>

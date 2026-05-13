@@ -207,7 +207,7 @@ export const EditMenuItemModal = ({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <Label htmlFor="price">Preço (R$) *</Label>
               <Input
@@ -224,6 +224,24 @@ export const EditMenuItemModal = ({
                 }
                 placeholder="0.00"
                 required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="cost">Custo (R$)</Label>
+              <Input
+                id="cost"
+                type="number"
+                step="0.01"
+                min="0"
+                value={editItem.cost || 0}
+                onChange={(e) =>
+                  setEditItem({
+                    ...editItem,
+                    cost: parseFloat(e.target.value) || 0,
+                  })
+                }
+                placeholder="0.00"
               />
             </div>
 
@@ -260,6 +278,41 @@ export const EditMenuItemModal = ({
               )}
             </div>
           </div>
+
+          {/* Categorias adicionais */}
+          {validCategories.length > 0 && (
+            <div>
+              <Label>Categorias adicionais (item aparecerá também nestas categorias)</Label>
+              <div className="grid grid-cols-2 gap-2 mt-2 p-3 border rounded-md max-h-48 overflow-y-auto">
+                {validCategories
+                  .filter((cat) => cat.id !== editItem.category && !cat.isPopularCategory)
+                  .map((category) => {
+                    const checked = (editItem.additionalCategories || []).includes(category.id);
+                    return (
+                      <div key={category.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`addcat-${category.id}`}
+                          checked={checked}
+                          onCheckedChange={(isChecked) => {
+                            const current = editItem.additionalCategories || [];
+                            const updated = isChecked
+                              ? [...current, category.id]
+                              : current.filter((id) => id !== category.id);
+                            setEditItem({ ...editItem, additionalCategories: updated });
+                          }}
+                        />
+                        <Label htmlFor={`addcat-${category.id}`} className="text-sm font-normal cursor-pointer">
+                          {category.name}
+                        </Label>
+                      </div>
+                    );
+                  })}
+                {validCategories.filter((cat) => cat.id !== editItem.category && !cat.isPopularCategory).length === 0 && (
+                  <p className="text-xs text-muted-foreground col-span-2">Nenhuma outra categoria disponível.</p>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Tipo do item */}
           <div>
@@ -376,7 +429,7 @@ export const EditMenuItemModal = ({
               </div>
 
               {editItem.image && (
-                <div className="mt-2">
+                <div className="mt-2 flex items-center gap-4">
                   <img
                     src={editItem.image}
                     alt="Preview"
@@ -385,6 +438,10 @@ export const EditMenuItemModal = ({
                       e.currentTarget.style.display = "none";
                     }}
                   />
+                  <Button onClick={handleSaveItem} className="bg-primary text-primary-foreground">
+                    <Save className="h-4 w-4 mr-1" />
+                    Salvar
+                  </Button>
                 </div>
               )}
             </div>
@@ -444,6 +501,7 @@ export const EditMenuItemModal = ({
             variations={variations}
             variationGroups={variationGroups}
             pizzaBorders={pizzaBorders}
+            menuItems={menuItems}
             onDataChange={onSuccess}
           />
 
@@ -468,6 +526,7 @@ const VariationGroupsSectionWithPrices = ({
   variations,
   variationGroups,
   pizzaBorders = [],
+  menuItems = [],
   onDataChange,
 }: {
   editItem: MenuItem;
@@ -475,6 +534,7 @@ const VariationGroupsSectionWithPrices = ({
   variations: Variation[];
   variationGroups: VariationGroup[];
   pizzaBorders?: PizzaBorder[];
+  menuItems?: MenuItem[];
   onDataChange?: () => void;
 }) => {
   return (
@@ -484,6 +544,7 @@ const VariationGroupsSectionWithPrices = ({
       variations={variations}
       variationGroups={variationGroups}
       pizzaBorders={pizzaBorders}
+      menuItems={menuItems}
       onDataChange={onDataChange}
     />
   );

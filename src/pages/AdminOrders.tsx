@@ -458,7 +458,7 @@ const AdminOrders = () => {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] xl:max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Detalhes do Pedido</DialogTitle>
             <DialogDescription>
@@ -469,15 +469,10 @@ const AdminOrders = () => {
           {selectedOrder && (
             <OrderDetails 
               order={selectedOrder} 
-              onUpdateStatus={handleUpdateOrderStatus} 
+              onUpdateStatus={handleUpdateOrderStatus}
+              onClose={() => setDialogOpen(false)}
             />
           )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              Fechar
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -1,266 +1,168 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getAllMenuItems } from "@/services/menuItemService";
 import { getAllCategories } from "@/services/categoryService";
-import { MenuItem, Category } from "@/types/menu";
+import { MenuItem, Category, POPULAR_CATEGORY_ID } from "@/types/menu";
 import RestaurantHeader from "@/components/RestaurantHeader";
 import CategoryNav from "@/components/CategoryNav";
 import MenuSection from "@/components/MenuSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ShoppingCart, LogIn, LogOut, ClipboardList, Search, X } from "lucide-react";
+import { Search, X, MessageCircle, ClipboardList, LogOut, LogIn } from "lucide-react";
+import ChatAssistant from "@/components/ChatAssistant";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { trackViewItemList } from "@/utils/trackingEvents";
+import { trackViewItemList, trackMenuVisit } from "@/utils/trackingEvents";
+import { useLayoutSettings } from "@/hooks/useLayoutSettings";
+import { useActiveOrdersCount } from "@/hooks/useActiveOrdersCount";
 
 const Index = () => {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
-  const { itemCount, isCartOpen, setIsCartOpen } = useCart();
   const { currentUser, logOut } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-
+  const { settings } = useLayoutSettings();
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const activeOrdersCount = useActiveOrdersCount();
   const itemRefs = useRef<Record<string, { triggerClick: () => void } | null>>({});
   const deepLinkHandled = useRef(false);
+  const menuVisitTracked = useRef(false);
 
   useEffect(() => {
-    const loadMenuItems = async () => {
-      const items = await getAllMenuItems();
-      const availableItems = items.filter(item => item.available !== false);
-      setMenuItems(availableItems);
+    const loadData = async () => {
+      const [items, cats] = await Promise.all([getAllMenuItems(), getAllCategories()]);
+      setMenuItems(items.filter(item => item.available !== false));
+      setCategories([{ id: "all", name: "Todos", order: -1 }, ...cats.filter(c => c.visible !== false)]);
     };
-
-    const loadCategories = async () => {
-      const categories = await getAllCategories();
-      setCategories([{ id: "all", name: "Todos", order: 0 }, ...categories]);
-    };
-
-    loadMenuItems();
-    loadCategories();
+    loadData();
+    if (!menuVisitTracked.current) {
+      menuVisitTracked.current = true;
+      trackMenuVisit();
+    }
   }, []);
 
-  // Deep link handler — runs after items are rendered and refs populated
   const handleDeepLink = useCallback(() => {
     if (deepLinkHandled.current) return;
-
     const itemId = searchParams.get("item");
     if (!itemId || menuItems.length === 0) return;
+    const matchedItem = menuItems.find(i => i.id === itemId);
+    if (!matchedItem) return;
 
-    // Wait a tick for refs to be populated after render
-    requestAnimationFrame(() => {
+    let attempts = 0;
+    const tryOpen = () => {
       const el = document.querySelector(`[data-product-id="${itemId}"]`);
       const handle = itemRefs.current[itemId];
-
       if (el && handle) {
         deepLinkHandled.current = true;
-
         el.scrollIntoView({ behavior: "smooth", block: "center" });
-
-        // Fire custom tracking event
-        const matchedItem = menuItems.find(i => i.id === itemId);
-        if (matchedItem) {
-          try {
-            (window as any).fbq?.("trackCustom", "view_item_from_ads", {
-              content_ids: [matchedItem.id],
-              content_name: matchedItem.name,
-              content_category: matchedItem.category,
-              currency: "BRL",
-              value: matchedItem.price,
-            });
-            (window as any).dataLayer = (window as any).dataLayer || [];
-            (window as any).dataLayer.push({
-              event: "view_item_from_ads",
-              ecommerce: {
-                currency: "BRL",
-                value: matchedItem.price,
-                items: [{
-                  item_id: matchedItem.id,
-                  item_name: matchedItem.name,
-                  item_category: matchedItem.category,
-                  price: matchedItem.price,
-                }],
-              },
-            });
-          } catch (e) {
-            console.error("view_item_from_ads tracking error:", e);
-          }
-        }
-
-        // Trigger click after scroll settles
         setTimeout(() => {
           handle.triggerClick();
-          // Clean up the URL param
           searchParams.delete("item");
           setSearchParams(searchParams, { replace: true });
         }, 600);
-      }
-    });
+      } else if (attempts++ < 50) setTimeout(tryOpen, 100);
+    };
+    tryOpen();
   }, [menuItems, searchParams, setSearchParams]);
 
-  useEffect(() => {
-    handleDeepLink();
-  }, [handleDeepLink]);
+  useEffect(() => { handleDeepLink(); }, [handleDeepLink]);
 
-  // Filtrar itens por busca e categoria
   const filteredItems = menuItems.filter(item => {
-    const matchesSearch = searchTerm === "" || 
-      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.description?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesCategory = activeCategory === "all" || item.category === activeCategory;
-    
+    const matchesSearch = searchTerm === "" || item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.description?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = activeCategory === "all" ? true : activeCategory === POPULAR_CATEGORY_ID ? item.popular : (item.category === activeCategory || (item.additionalCategories || []).includes(activeCategory));
     return matchesSearch && matchesCategory;
-  }).sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
+  }).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
-  // Agrupar e ordenar itens por categoria para exibição
   const groupedItems = categories.reduce((acc, category) => {
     if (category.id === "all") return acc;
-    
-    let categoryItems = filteredItems.filter(item => item.category === category.id);
-
-    categoryItems = categoryItems.sort((a, b) =>
-      a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" })
-    );
-
-    if (categoryItems.length > 0) {
-      acc.push({
-        category,
-        items: categoryItems
-      });
-    }
+    const items = filteredItems.filter(item => category.id === POPULAR_CATEGORY_ID ? item.popular : (item.category === category.id || (item.additionalCategories || []).includes(category.id))).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+    if (items.length > 0) acc.push({ category, items });
     return acc;
   }, [] as Array<{ category: Category; items: MenuItem[] }>);
 
-  const handleLogin = () => {
-    navigate("/login");
-  };
-
-  const handleLogout = async () => {
-    try {
-      await logOut();
-    } catch (error) {
-      console.error("Erro ao fazer logout:", error);
-    }
-  };
-
   return (
-    <div>
-      <RestaurantHeader />
+    <div style={{ backgroundColor: settings.cor_background, color: settings.cor_fonte, minHeight: '100vh' }}>
       
-      {/* Header com botão de login/logout e meus pedidos */}
-      <div className="bg-background border-b">
-        <div className="container mx-auto px-4 py-4 flex justify-end gap-2">
-          {currentUser && (
-            <Button 
-              variant="outline" 
-              onClick={() => navigate("/meus-pedidos")}
-              className="flex items-center gap-2"
-            >
-              <ClipboardList className="h-4 w-4" />
-              Meus Pedidos
-            </Button>
-          )}
-          {currentUser ? (
-            <Button 
-              variant="outline" 
-              onClick={handleLogout}
-              className="flex items-center gap-2"
-            >
-              <LogOut className="h-4 w-4" />
-              Sair
-            </Button>
-          ) : (
-            <Button 
-              variant="default" 
-              onClick={handleLogin}
-              className="flex items-center gap-2"
-            >
-              <LogIn className="h-4 w-4" />
-              Entrar
-            </Button>
-          )}
+      {/* HEADER COM SOBREPOSIÇÃO NO BANNER */}
+      <div className="-mt-12 md:mt-0 relative z-20">
+        <RestaurantHeader
+          actions={
+            <div className="flex flex-col items-center md:items-end gap-1.5 md:gap-2">
+              <div className="flex flex-row items-center gap-1.5 md:gap-2">
+                <Button variant="outline" onClick={() => setIsChatOpen(true)} className="px-1.5 text-[10px] md:text-sm h-9" style={{ backgroundColor: settings.cor_botoes, color: settings.cor_fonte_botoes }}><MessageCircle className="h-3 w-3" /> Fale Conosco</Button>
+                {currentUser && (
+                  <div className="relative">
+                    <Button variant="outline" onClick={() => navigate("/meus-pedidos")} className="px-1.5 text-[10px] md:text-sm h-9" style={{ backgroundColor: settings.cor_botoes, color: settings.cor_fonte_botoes }}><ClipboardList className="h-3 w-3" />Meus Pedidos</Button>
+                    {activeOrdersCount > 0 && (
+                      <span className="absolute -top-2 -right-2 min-w-[20px] h-5 px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center shadow-md ring-2 ring-white">
+                        {activeOrdersCount}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <Button variant="outline" onClick={currentUser ? () => logOut() : () => navigate("/login")} className="px-1.5 text-[10px] md:text-sm h-9" style={{ backgroundColor: settings.cor_botoes, color: settings.cor_fonte_botoes }}>{currentUser ? <LogOut className="h-3 w-3" /> : <LogIn className="h-3 w-3" />} {currentUser ? "Sair" : "Entrar"}</Button>
+              </div>
+              {/* RESTAURADO: E-mail do usuário aparece abaixo dos botões se estiver logado */}
+              {currentUser && (
+                <span className="text-center md:text-right w-full block" style={{ fontSize: '11px', color: settings.cor_fonte, opacity: 0.8 }}>
+                  {currentUser.email}
+                </span>
+              )}
+            </div>
+          }
+        />
+      </div>
+
+      {/* Busca - aparece antes da nav no mobile, depois no desktop */}
+      <div className="order-1 md:order-3 px-4 z-10 -mt-4 md:mt-8 flex md:hidden">
+        <div className="relative max-w-xl mx-auto w-full">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-primary/60" />
+          <Input
+            type="text"
+            placeholder="Busque pizza ou ingrediente..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 pr-10 h-12 text-xs border-2 border-muted bg-card shadow-md rounded-xl focus-visible:ring-primary"
+          />
+          {searchTerm && <X onClick={() => setSearchTerm("")} className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground cursor-pointer" />}
         </div>
       </div>
 
+      {/* CategoryNav - filha direta para sticky funcionar contra o container alto */}
       <CategoryNav 
         categories={categories} 
         activeCategory={activeCategory}
-        onSelectCategory={(categoryId) => {
-          setActiveCategory(categoryId);
-          // Fire view_item_list only on explicit category click
-          const categoryName = categories.find(c => c.id === categoryId)?.name || categoryId;
-          const categoryItems = categoryId === "all"
-            ? menuItems
-            : menuItems.filter(item => item.category === categoryId);
-          if (categoryItems.length > 0) {
-            trackViewItemList({
-              listName: categoryName,
-              items: categoryItems.map(item => ({
-                id: item.id,
-                name: item.name,
-                price: item.price,
-                category: item.category,
-              })),
-            });
-          }
-        }}
+        onSelectCategory={(id) => setActiveCategory(id)}
       />
-{/* Campo de busca com destaque aprimorado */}
-<div className="container mx-auto px-4 pt-8 pb-4">
-  <div className="relative max-w-xl mx-auto group">
-    {/* Background decorativo para criar profundidade */}
-    <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 to-primary/10 rounded-xl blur opacity-25 group-focus-within:opacity-50 transition duration-300"></div>
-    
-    <div className="relative flex items-center">
-      <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-primary/60" />
-      <Input
-        type="text"
-        placeholder="colônia, amadeirado, masculino...etc"
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        className="pl-12 pr-12 h-14 text-xs border-2 border-muted bg-card shadow-lg rounded-xl focus-visible:ring-primary focus-visible:border-primary transition-all"
-      />
-      {searchTerm && (
-        <button
-          onClick={() => setSearchTerm("")}
-          className="absolute right-4 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-primary p-1"
-        >
-          <X className="h-5 w-5" />
-        </button>
-      )}
-    </div>
-    {/* Feedback visual de itens encontrados (opcional) */}
-    {searchTerm && (
-      <p className="text-center text-sm text-muted-foreground mt-2 animate-in fade-in slide-in-from-top-1">
-        Encontramos {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'itens'}
-      </p>
-    )}
-  </div>
-</div>
 
+      {/* Busca no desktop - abaixo da nav */}
+      <div className="px-4 z-10 mt-8 hidden md:block">
+        <div className="relative max-w-xl mx-auto">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-primary/60" />
+          <Input
+            type="text"
+            placeholder="Busque pizza ou ingrediente..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 pr-10 h-12 text-xs border-2 border-muted bg-card shadow-md rounded-xl focus-visible:ring-primary"
+          />
+          {searchTerm && <X onClick={() => setSearchTerm("")} className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground cursor-pointer" />}
+        </div>
+      </div>
 
-      
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 pt-0 pb-8 md:pt-8">
         {activeCategory === "all" ? (
           groupedItems.map(({ category, items }) => (
-            <MenuSection 
-              key={category.id}
-              title={category.name} 
-              items={items}
-              itemRefs={itemRefs}
-            />
+            <MenuSection key={category.id} title={category.name} items={items} itemRefs={itemRefs} />
           ))
         ) : (
-          <MenuSection 
-            title={categories.find(cat => cat.id === activeCategory)?.name || "Menu"} 
-            items={filteredItems}
-            itemRefs={itemRefs}
-          />
+          <MenuSection title={categories.find(c => c.id === activeCategory)?.name || "Menu"} items={filteredItems} itemRefs={itemRefs} />
         )}
       </div>
+      <ChatAssistant isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
     </div>
   );
 };

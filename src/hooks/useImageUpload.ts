@@ -10,9 +10,18 @@ export const useImageUpload = () => {
     setIsUploading(true);
     
     try {
-      // Generate a unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+      // Generate filename: original_name-ddmmaaaahhmmss.ext
+      const lastDot = file.name.lastIndexOf('.');
+      const rawName = lastDot > 0 ? file.name.substring(0, lastDot) : file.name;
+      const fileExt = lastDot > 0 ? file.name.substring(lastDot + 1) : '';
+      const sanitizedName = rawName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const timestamp = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const fileName = `${sanitizedName}-${timestamp}${fileExt ? '.' + fileExt : ''}`;
       
       // Upload file to Supabase Storage
       const { data, error } = await supabase.storage

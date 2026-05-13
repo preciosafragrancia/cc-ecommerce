@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { CartProvider } from "@/contexts/CartContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { LayoutSettingsProvider } from "@/hooks/useLayoutSettings";
 import { useAuth } from "@/hooks/useAuth";
 import { useTracking } from "@/hooks/useTracking";
 import AdminRoute from "@/components/AdminRoute";
@@ -22,7 +23,7 @@ import PDV from "./pages/PDV";
 import Api from "./pages/Api";
 import NotFound from "./pages/NotFound";
 import ShoppingCart from "./components/ShoppingCart";
-import ChatAssistant from "./components/ChatAssistant";
+
 import Checkout from "./pages/Checkout";
 import ForgotPassword from "./pages/ForgotPassword";
 import AdminCupons from "@/pages/AdminCupons";
@@ -34,6 +35,8 @@ import Marketing from "./pages/Marketing";
 import AdminMetrics from "./pages/AdminMetrics";
 import AdminIntelligence from "./pages/AdminIntelligence";
 import Configuracoes from "./pages/Configuracoes";
+import LayoutPage from "./pages/Layout";
+import Exportacoes from "./pages/Exportacoes";
 
 const queryClient = new QueryClient();
 
@@ -67,7 +70,9 @@ const AppRoutes = () => {
     '/fidelidade',
     '/marketing',
     '/configuracoes',
-    '/admin-intelligence'
+    '/admin-intelligence',
+    '/layout',
+    '/exportacoes'
   ];
   
   const isAdminPage = adminRoutes.some(route => location.pathname.startsWith(route));
@@ -80,7 +85,7 @@ const AppRoutes = () => {
         <Route path="/register" element={<Register />} />
         <Route path="/checkout" element={<Checkout />} />
         <Route path="/meus-pedidos" element={<MeusPedidos />} />
-        <Route path="/ChatAssistant" element={<ChatAssistant />} />
+        
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/admin-dashboard" element={
           <AdminRoute>
@@ -151,11 +156,21 @@ const AppRoutes = () => {
             <Configuracoes />
           </SuperAdminRoute>
         } />
+        <Route path="/layout" element={
+          <AdminRoute>
+            <LayoutPage />
+          </AdminRoute>
+        } />
+        <Route path="/exportacoes" element={
+          <AdminRoute>
+            <Exportacoes />
+          </AdminRoute>
+        } />
         <Route path="/api/*" element={<Api />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
       {!isAdminPage && <ShoppingCart />}
-      {!isAdminPage && <ChatAssistant />}
+      
     </>
   );
 };
@@ -164,13 +179,15 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
-        <CartProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <AppRoutes />
-          </BrowserRouter>
-        </CartProvider>
+        <LayoutSettingsProvider>
+          <CartProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <AppRoutes />
+            </BrowserRouter>
+          </CartProvider>
+        </LayoutSettingsProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

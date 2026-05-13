@@ -6,11 +6,13 @@ import {
   signOut,
   UserCredential,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import { supabase } from "@/integrations/supabase/client";
+import { getUtmParams } from "@/utils/utmCapture";
 
 // ============================================
-// SIGN UP (com envio direto para n8n)
+// SIGN UP (com envio direto para n8n) - Rwmovido do n8n 08/04/2026
 // ============================================
 export async function signUp(
   email: string, 
@@ -21,9 +23,30 @@ export async function signUp(
   const result = await createUserWithEmailAndPassword(auth, email, password);
   
   if (result.user) {
+    // Salva usuário no Firestore (coleção "users") com email e whatsapp
+    try {
+      await setDoc(
+        doc(db, "users", result.user.uid),
+        {
+          uid: result.user.uid,
+          email: result.user.email || email,
+          name: name || "",
+          whatsapp: phone || "",
+          phone: phone || "",
+          createdAt: serverTimestamp(),
+          lastSignInAt: serverTimestamp(),
+          role: "user",
+        },
+        { merge: true }
+      );
+      console.log("✅ Usuário salvo no Firestore com email e whatsapp");
+    } catch (firestoreError) {
+      console.error("❌ Erro ao salvar usuário no Firestore:", firestoreError);
+    }
+
     // Salva usuário no Supabase com role "user"
     try {
-      const { error: supabaseError } = await supabase
+      const { data, error: supabaseError } = await supabase
         .from('users')
         .upsert({
           firebase_id: result.user.uid,
@@ -33,45 +56,17 @@ export async function signUp(
           created_at: new Date().toISOString(),
           last_sign_in_at: new Date().toISOString(),
           role: "user",
-        }, { onConflict: 'firebase_id' });
+        }, { onConflict: 'firebase_id' })
+        .select()
+        .single();
 
       if (supabaseError) {
         console.error("❌ Erro ao salvar usuário no Supabase:", supabaseError);
       } else {
-        console.log("✅ Usuário criado no Supabase com role 'user'");
+        console.log("✅ Usuário criado no Supabase com role:", data?.role);
       }
     } catch (err) {
       console.error("⚠️ Falha ao salvar no Supabase:", err);
-    }
-
-    // Envia dados para webhook do n8n
-    try {
-      const userData = {
-        id: result.user.uid,
-        firebase_id: result.user.uid,
-        email: result.user.email || "",
-        name: name || "",
-        phone: phone || "",
-        created_at: new Date().toISOString(),
-        last_sign_in_at: new Date().toISOString(),
-        role: "user",
-      };
-
-      const response = await fetch(
-        "https://n8n-n8n-start.yh11mi.easypanel.host/webhook/PF_signup",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(userData),
-        }
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.error("❌ Erro ao enviar para n8n:", text);
-      }
-    } catch (err) {
-      console.error("⚠️ Falha no fetch para o n8n:", err);
     }
   }
   

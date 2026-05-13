@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { phoneVariants } from '@/utils/phoneUtils';
 
 export interface CustomerData {
   id?: string;
@@ -98,16 +99,21 @@ export const saveCustomerData = async (customerData: CustomerData): Promise<Cust
 export const getCustomerByPhone = async (phone: string): Promise<CustomerData | null> => {
   try {
     console.log('Buscando cliente por telefone:', phone);
-    
+
     if (!phone) {
       console.error('Telefone não fornecido');
       return null;
     }
 
+    const variants = phoneVariants(phone);
+    if (variants.length === 0) return null;
+
     const { data, error } = await supabase
       .from('customer_data')
       .select('*')
-      .eq('phone', phone)
+      .in('phone', variants)
+      .order('updated_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) {
@@ -118,10 +124,9 @@ export const getCustomerByPhone = async (phone: string): Promise<CustomerData | 
     if (data) {
       console.log('Cliente encontrado:', data);
       return data;
-    } else {
-      console.log('Cliente não encontrado');
-      return null;
     }
+    console.log('Cliente não encontrado');
+    return null;
   } catch (error) {
     console.error('Erro ao buscar cliente:', error);
     return null;

@@ -5,7 +5,7 @@ import { DateRange } from "react-day-picker";
 import {
   ArrowLeft, Users, Eye, MousePointerClick, Clock, UserPlus, BarChart3,
   Globe, Timer, RefreshCw, Smartphone, Monitor, Tablet, ShoppingCart, Megaphone, DollarSign,
-  ChevronLeft, ChevronRight, Package, Search,
+  ChevronLeft, ChevronRight, Package, Search, Filter,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -37,8 +37,9 @@ import {
 } from "@/services/ga4Service";
 import {
   fetchSalesHeatmap, fetchSalesBySource, fetchSalesByCampaign, fetchItemPerformance,
-  fetchCampaignDetail, fetchSourceDetail,
+  fetchCampaignDetail, fetchSourceDetail, fetchSalesByMedium, fetchSalesByContent, fetchSalesByTerm,
 } from "@/services/salesAnalyticsService";
+import { getFunnelData, getMenuVisitsBreakdown, getAddToCartBreakdown, getCheckoutDurationBreakdown, getPurchasesBreakdown, getAbandonedTicketBreakdown, getProductViewsBreakdown, type FunnelData } from "@/services/productEventService";
 import { formatCurrency } from "@/lib/utils";
 
 const dailyChartConfig: ChartConfig = {
@@ -64,6 +65,21 @@ const salesSourceChartConfig: ChartConfig = {
 const salesCampaignChartConfig: ChartConfig = {
   revenue: { label: "Receita", color: "hsl(262, 83%, 58%)" },
   orders: { label: "Pedidos", color: "hsl(25, 95%, 53%)" },
+};
+
+const salesMediumChartConfig: ChartConfig = {
+  revenue: { label: "Receita", color: "hsl(340, 82%, 52%)" },
+  orders: { label: "Pedidos", color: "hsl(200, 98%, 39%)" },
+};
+
+const salesContentChartConfig: ChartConfig = {
+  revenue: { label: "Receita", color: "hsl(47, 100%, 47%)" },
+  orders: { label: "Pedidos", color: "hsl(160, 84%, 39%)" },
+};
+
+const salesTermChartConfig: ChartConfig = {
+  revenue: { label: "Receita", color: "hsl(280, 67%, 51%)" },
+  orders: { label: "Pedidos", color: "hsl(14, 100%, 57%)" },
 };
 
 const SALES_HEATMAP_COLORS = {
@@ -108,10 +124,138 @@ const AdminGA4 = () => {
     queryFn: () => fetchSalesByCampaign(startDate, endDate),
   });
 
+  const { data: salesByMediumData } = useQuery({
+    queryKey: ["sales-by-medium", startDate, endDate],
+    queryFn: () => fetchSalesByMedium(startDate, endDate),
+  });
+
+  const { data: salesByContentData } = useQuery({
+    queryKey: ["sales-by-content", startDate, endDate],
+    queryFn: () => fetchSalesByContent(startDate, endDate),
+  });
+
+  const { data: salesByTermData } = useQuery({
+    queryKey: ["sales-by-term", startDate, endDate],
+    queryFn: () => fetchSalesByTerm(startDate, endDate),
+  });
+
   const { data: itemPerformanceData } = useQuery({
     queryKey: ["item-performance", startDate, endDate],
     queryFn: () => fetchItemPerformance(startDate, endDate),
   });
+
+  // Funnel data query
+  const { data: funnelRawData } = useQuery({
+    queryKey: ["funnel-data", startDate, endDate],
+    queryFn: () => getFunnelData(startDate, endDate),
+  });
+
+  const [funnelProduct, setFunnelProduct] = useState<string>("all");
+  const [visitsModalOpen, setVisitsModalOpen] = useState(false);
+  const [viewsModalOpen, setViewsModalOpen] = useState(false);
+  const [cartModalOpen, setCartModalOpen] = useState(false);
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
+  const [purchasesModalOpen, setPurchasesModalOpen] = useState(false);
+
+  const { data: viewsBreakdown, isLoading: isViewsBreakdownLoading } = useQuery({
+    queryKey: ["product-views-breakdown", startDate, endDate],
+    queryFn: () => getProductViewsBreakdown(startDate, endDate),
+    enabled: viewsModalOpen,
+  });
+
+  const { data: categoriesList } = useQuery({
+    queryKey: ["all-categories-names"],
+    queryFn: async () => {
+      const { getAllCategories } = await import("@/services/categoryService");
+      return getAllCategories();
+    },
+    enabled: viewsModalOpen,
+  });
+
+  const categoryNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    (categoriesList || []).forEach((c: any) => m.set(c.id, c.name));
+    return m;
+  }, [categoriesList]);
+
+  const sortedFullList = useMemo(() => {
+    if (!viewsBreakdown?.fullList) return [];
+    return [...viewsBreakdown.fullList].sort((a, b) => b.conversion - a.conversion);
+  }, [viewsBreakdown]);
+
+  const { data: visitsBreakdown, isLoading: isVisitsBreakdownLoading } = useQuery({
+    queryKey: ["menu-visits-breakdown", startDate, endDate],
+    queryFn: () => getMenuVisitsBreakdown(startDate, endDate),
+    enabled: visitsModalOpen,
+  });
+
+  const { data: cartBreakdown, isLoading: isCartBreakdownLoading } = useQuery({
+    queryKey: ["add-to-cart-breakdown", startDate, endDate],
+    queryFn: () => getAddToCartBreakdown(startDate, endDate),
+    enabled: cartModalOpen,
+  });
+
+  const { data: checkoutBreakdown, isLoading: isCheckoutBreakdownLoading } = useQuery({
+    queryKey: ["checkout-duration-breakdown", startDate, endDate],
+    queryFn: () => getCheckoutDurationBreakdown(startDate, endDate),
+    enabled: checkoutModalOpen,
+  });
+
+  const { data: abandonedTicket } = useQuery({
+    queryKey: ["abandoned-ticket-breakdown", startDate, endDate],
+    queryFn: () => getAbandonedTicketBreakdown(startDate, endDate),
+    enabled: checkoutModalOpen,
+  });
+
+  const { data: purchasesBreakdown, isLoading: isPurchasesBreakdownLoading } = useQuery({
+    queryKey: ["purchases-breakdown", startDate, endDate],
+    queryFn: () => getPurchasesBreakdown(startDate, endDate),
+    enabled: purchasesModalOpen,
+  });
+
+  const funnelChartData = useMemo(() => {
+    const items = funnelRawData?.perProduct || [];
+    const globals = funnelRawData?.globals || {
+      menuVisits: 0,
+      beginCheckout: 0,
+      viewItemSessions: 0,
+      addToCartSessions: 0,
+      purchaseSessions: 0,
+    };
+    let views = 0, addToCart = 0, purchases = 0;
+
+    if (funnelProduct === "all") {
+      // Totais globais = sessões únicas (uma sessão que viu 3 produtos conta 1x)
+      views = globals.viewItemSessions;
+      addToCart = globals.addToCartSessions;
+      purchases = globals.purchaseSessions;
+    } else {
+      const item = items.find(i => i.product_id === funnelProduct);
+      if (item) { views = item.views; addToCart = item.addToCart; purchases = item.purchases; }
+    }
+
+    const menuVisits = globals.menuVisits;
+    const beginCheckout = globals.beginCheckout;
+
+    const pct = (num: number, den: number) => (den > 0 ? (num / den) * 100 : 0);
+    const convTotal = pct(purchases, menuVisits || views);
+
+    return {
+      steps: [
+        { name: "Visitas ao Cardápio", value: menuVisits, rate: 100, dropoff: 0 },
+        { name: "Visualizações", value: views, rate: pct(views, menuVisits), dropoff: Math.max(menuVisits - views, 0) },
+        { name: "Add ao Carrinho", value: addToCart, rate: pct(addToCart, views), dropoff: Math.max(views - addToCart, 0) },
+        { name: "Início de Checkout", value: beginCheckout, rate: pct(beginCheckout, addToCart), dropoff: Math.max(addToCart - beginCheckout, 0) },
+        { name: "Compras", value: purchases, rate: pct(purchases, beginCheckout), dropoff: Math.max(beginCheckout - purchases, 0) },
+      ],
+      convTotal,
+    };
+  }, [funnelRawData, funnelProduct]);
+
+  // Products that have been sold (for funnel dropdown)
+  const funnelProductOptions = useMemo(() => {
+    return (funnelRawData?.perProduct || []).filter(i => i.purchases > 0);
+  }, [funnelRawData]);
 
   const [itemPage, setItemPage] = useState(0);
   const [selectedCampaign, setSelectedCampaign] = useState<string | null>(null);
@@ -472,8 +616,8 @@ const AdminGA4 = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ChartContainer config={sourcesChartConfig} className="h-[350px] w-full">
-                      <BarChart data={sourcesData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
+                    <ChartContainer config={sourcesChartConfig} className="h-[300px] w-full">
+                      <BarChart data={sourcesData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                         <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
                         <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} width={90} />
@@ -492,7 +636,7 @@ const AdminGA4 = () => {
                   </CardHeader>
                   <CardContent>
                     {devicesData.length === 0 ? (
-                      <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+                      <div className="flex items-center justify-center h-[120px] text-muted-foreground text-sm">
                         Sem dados de dispositivos. Colete um novo snapshot.
                       </div>
                     ) : (
@@ -551,12 +695,12 @@ const AdminGA4 = () => {
                 </CardHeader>
                 <CardContent>
                   {conversionData.length === 0 ? (
-                    <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+                    <div className="flex items-center justify-center h-[300px] text-muted-foreground text-sm">
                       Sem dados de conversão no período
                     </div>
                   ) : (
-                    <ChartContainer config={conversionChartConfig} className="h-[350px] w-full">
-                      <BarChart data={conversionData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
+                    <ChartContainer config={conversionChartConfig} className="h-[300px] w-full">
+                      <BarChart data={conversionData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                         <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
                         <YAxis type="category" dataKey="source" fontSize={11} tickLine={false} axisLine={false} width={90} />
@@ -661,12 +805,12 @@ const AdminGA4 = () => {
               </CardHeader>
               <CardContent>
                 {(salesBySourceData || []).length === 0 ? (
-                  <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+                  <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
                     Sem dados de UTM. As vendas aparecerão aqui conforme pedidos com UTMs forem criados.
                   </div>
                 ) : (
-                  <ChartContainer config={salesSourceChartConfig} className="h-[350px] w-full">
-                    <BarChart data={salesBySourceData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 80 }}>
+                  <ChartContainer config={salesSourceChartConfig} className="h-[300px] w-full">
+                    <BarChart data={salesBySourceData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                       <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
                       <YAxis type="category" dataKey="source" fontSize={11} tickLine={false} axisLine={false} width={75} />
@@ -706,12 +850,12 @@ const AdminGA4 = () => {
               </CardHeader>
               <CardContent>
                 {(salesByCampaignData || []).length === 0 ? (
-                  <div className="flex items-center justify-center h-[350px] text-muted-foreground text-sm">
+                  <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
                     Sem dados de campanhas. Adicione ?utm_campaign=nome nas URLs de campanhas.
                   </div>
                 ) : (
-                  <ChartContainer config={salesCampaignChartConfig} className="h-[350px] w-full">
-                    <BarChart data={salesByCampaignData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 80 }}>
+                  <ChartContainer config={salesCampaignChartConfig} className="h-[300px] w-full">
+                    <BarChart data={salesByCampaignData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                       <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
                       <YAxis type="category" dataKey="campaign" fontSize={11} tickLine={false} axisLine={false} width={75} />
@@ -724,9 +868,90 @@ const AdminGA4 = () => {
             </Card>
           </div>
 
+          {/* UTM Medium / Content / Term */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            {/* Sales by Medium */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Globe className="h-4 w-4" /> Vendas por Mídia (Medium)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(salesByMediumData || []).length === 0 ? (
+                  <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
+                    Sem dados de utm_medium no período.
+                  </div>
+                ) : (
+                  <ChartContainer config={salesMediumChartConfig} className="h-[300px] w-full">
+                    <BarChart data={salesByMediumData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
+                      <YAxis type="category" dataKey="medium" fontSize={11} tickLine={false} axisLine={false} width={75} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="revenue" fill="var(--color-revenue)" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Sales by Content */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Filter className="h-4 w-4" /> Vendas por Conteúdo (Content)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(salesByContentData || []).length === 0 ? (
+                  <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
+                    Sem dados de utm_content no período.
+                  </div>
+                ) : (
+                  <ChartContainer config={salesContentChartConfig} className="h-[300px] w-full">
+                    <BarChart data={salesByContentData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
+                      <YAxis type="category" dataKey="content" fontSize={11} tickLine={false} axisLine={false} width={75} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="revenue" fill="var(--color-revenue)" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Sales by Term */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Search className="h-4 w-4" /> Vendas por Termo (Term)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(salesByTermData || []).length === 0 ? (
+                  <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm">
+                    Sem dados de utm_term no período.
+                  </div>
+                ) : (
+                  <ChartContainer config={salesTermChartConfig} className="h-[300px] w-full">
+                    <BarChart data={salesByTermData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 40 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
+                      <YAxis type="category" dataKey="term" fontSize={11} tickLine={false} axisLine={false} width={75} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="revenue" fill="var(--color-revenue)" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Campaign Detail Modal */}
           <Dialog open={!!selectedCampaign} onOpenChange={(open) => { if (!open) setSelectedCampaign(null); }}>
-            <DialogContent className="max-w-2xl max-h-[85vh]">
+            <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Search className="h-4 w-4" />
@@ -736,7 +961,7 @@ const AdminGA4 = () => {
                   Produtos vendidos via esta campanha no período de {startDate} a {endDate}
                 </DialogDescription>
               </DialogHeader>
-              <ScrollArea className="max-h-[60vh]">
+              <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
                 {isCampaignDetailLoading ? (
                   <div className="flex items-center justify-center h-32">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -782,13 +1007,13 @@ const AdminGA4 = () => {
                     </TableBody>
                   </Table>
                 )}
-              </ScrollArea>
+              </div>
             </DialogContent>
           </Dialog>
 
           {/* Source Detail Modal */}
           <Dialog open={!!selectedSource} onOpenChange={(open) => { if (!open) setSelectedSource(null); }}>
-            <DialogContent className="max-w-2xl max-h-[85vh]">
+            <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Globe className="h-4 w-4" />
@@ -798,7 +1023,7 @@ const AdminGA4 = () => {
                   Produtos vendidos via esta origem no período de {startDate} a {endDate}
                 </DialogDescription>
               </DialogHeader>
-              <ScrollArea className="max-h-[60vh]">
+              <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
                 {isSourceDetailLoading ? (
                   <div className="flex items-center justify-center h-32">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -844,7 +1069,7 @@ const AdminGA4 = () => {
                     </TableBody>
                   </Table>
                 )}
-              </ScrollArea>
+              </div>
             </DialogContent>
           </Dialog>
 
@@ -944,8 +1169,679 @@ const AdminGA4 = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* Funil de Vendas */}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Filter className="h-5 w-5" /> Funil de Vendas
+                </CardTitle>
+                <Select value={funnelProduct} onValueChange={setFunnelProduct}>
+                  <SelectTrigger className="w-[220px]">
+                    <SelectValue placeholder="Selecione o produto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos os Produtos</SelectItem>
+                    {funnelProductOptions.map(p => (
+                      <SelectItem key={p.product_id} value={p.product_id}>
+                        {p.product_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {funnelChartData.steps[0].value === 0 ? (
+                <p className="text-muted-foreground text-center py-8">Sem dados de funil para o período selecionado.</p>
+              ) : (
+                <div className="space-y-6">
+                  {/* Funnel bars */}
+                  <div className="space-y-3">
+                    {funnelChartData.steps.map((step, idx) => {
+                      const maxVal = funnelChartData.steps[0].value;
+                      const widthPct = maxVal > 0 ? Math.max((step.value / maxVal) * 100, 4) : 0;
+                      const colors = [
+                        "hsl(var(--primary))",
+                        "hsl(199, 89%, 48%)",
+                        "hsl(25, 95%, 53%)",
+                        "hsl(280, 65%, 55%)",
+                        "hsl(142, 76%, 36%)",
+                      ];
+                      return (
+                        <div key={step.name} className="space-y-1">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="font-medium">
+                              Etapa {idx + 1}: {step.name}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {step.value.toLocaleString("pt-BR")}
+                              {idx > 0 && (
+                                <span className="ml-2 font-semibold" style={{ color: colors[idx] }}>
+                                  {step.rate.toFixed(1)}%
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <div
+                            className={`w-full bg-muted rounded-full h-8 overflow-hidden ${idx === 0 || idx === 1 || idx === 2 || idx === 3 || idx === 4 ? "cursor-pointer hover:opacity-90 transition-opacity" : ""}`}
+                            onClick={
+                              idx === 0
+                                ? () => setVisitsModalOpen(true)
+                                : idx === 1
+                                ? () => setViewsModalOpen(true)
+                                : idx === 2
+                                ? () => setCartModalOpen(true)
+                                : idx === 3
+                                ? () => setCheckoutModalOpen(true)
+                                : idx === 4
+                                ? () => setPurchasesModalOpen(true)
+                                : undefined
+                            }
+                            title={
+                              idx === 0
+                                ? "Ver detalhes das visitas"
+                                : idx === 1
+                                ? "Ver detalhes das visualizações"
+                                : idx === 2
+                                ? "Ver detalhes dos add ao carrinho"
+                                : idx === 3
+                                ? "Ver tempo médio até finalizar"
+                                : idx === 4
+                                ? "Ver detalhes das compras efetivadas"
+                                : undefined
+                            }
+                          >
+                            <div
+                              className="h-full rounded-full flex items-center justify-center text-xs font-bold text-white transition-all duration-500"
+                              style={{
+                                width: `${widthPct}%`,
+                                backgroundColor: colors[idx],
+                                minWidth: step.value > 0 ? "40px" : "0px",
+                              }}
+                            >
+                              {step.value > 0 && step.value.toLocaleString("pt-BR")}
+                            </div>
+                          </div>
+                          {idx > 0 && step.dropoff > 0 && (
+                            <p className="text-xs text-destructive">
+                              Taxa de abandono: {step.dropoff.toLocaleString("pt-BR")} ({((step.dropoff / funnelChartData.steps[idx - 1].value) * 100).toFixed(1)}%)
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Conversion summary */}
+                  <div className="flex items-center justify-center gap-6 pt-4 border-t">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                        {funnelChartData.convTotal.toFixed(1)}%
+                      </p>
+                      <p className="text-xs text-muted-foreground">Conversão Total</p>
+                      <p className="text-xs text-muted-foreground">(Visita → Compra)</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
+
+      <Dialog open={visitsModalOpen} onOpenChange={setVisitsModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Detalhes das Visitas ao Cardápio</DialogTitle>
+            <DialogDescription>
+              Período: {startDate} até {endDate}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isVisitsBreakdownLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : !visitsBreakdown || visitsBreakdown.total === 0 ? (
+            <p className="text-muted-foreground text-center py-8">Sem visitas no período.</p>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
+              <div className="space-y-6">
+                <div className="grid grid-cols-3 gap-3">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-2xl font-bold">{visitsBreakdown.total.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Novas</p>
+                      <p className="text-2xl font-bold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                        {visitsBreakdown.novas.toLocaleString("pt-BR")}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Recorrentes</p>
+                      <p className="text-2xl font-bold" style={{ color: "hsl(199, 89%, 48%)" }}>
+                        {visitsBreakdown.recorrentes.toLocaleString("pt-BR")}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {([
+                  { title: "Por utm_source", rows: visitsBreakdown.bySource },
+                  { title: "Por utm_campaign", rows: visitsBreakdown.byCampaign },
+                  { title: "Por utm_medium", rows: visitsBreakdown.byMedium },
+                  { title: "Por utm_content", rows: visitsBreakdown.byContent },
+                ]).map(({ title, rows }) => (
+                  <div key={title}>
+                    <h4 className="font-semibold mb-2">{title}</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Valor</TableHead>
+                          <TableHead className="text-right">Visitas</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {rows.map((r) => (
+                          <TableRow key={r.key}>
+                            <TableCell className="font-medium">{r.key}</TableCell>
+                            <TableCell className="text-right">{r.count.toLocaleString("pt-BR")}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={viewsModalOpen} onOpenChange={setViewsModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Detalhes das Visualizações de Produto</DialogTitle>
+            <DialogDescription>
+              Período: {startDate} até {endDate}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isViewsBreakdownLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : !viewsBreakdown || viewsBreakdown.totalViews === 0 ? (
+            <p className="text-muted-foreground text-center py-8">Sem visualizações no período.</p>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Total de Views</p>
+                      <p className="text-2xl font-bold">{viewsBreakdown.totalViews.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Add ao Carrinho</p>
+                      <p className="text-2xl font-bold">{viewsBreakdown.totalAddToCart.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Produtos únicos</p>
+                      <p className="text-2xl font-bold">{viewsBreakdown.uniqueProducts.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Top 3 categorias mais clicadas</h4>
+                  {viewsBreakdown.topCategories.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Sem dados de categoria.</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Categoria</TableHead>
+                          <TableHead className="text-right">Views</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {viewsBreakdown.topCategories.map((c) => (
+                          <TableRow key={c.category}>
+                            <TableCell className="font-medium">{categoryNameById.get(c.category) || c.category}</TableCell>
+                            <TableCell className="text-right">{c.views.toLocaleString("pt-BR")}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Top 5 produtos mais visualizados</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Produto</TableHead>
+                        <TableHead className="text-right">Views</TableHead>
+                        <TableHead className="text-right">Add Carrinho</TableHead>
+                        <TableHead className="text-right">Conversão</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {viewsBreakdown.topProducts.map((p) => (
+                        <TableRow key={p.product_id}>
+                          <TableCell className="font-medium">{p.product_name}</TableCell>
+                          <TableCell className="text-right">{p.views.toLocaleString("pt-BR")}</TableCell>
+                          <TableCell className="text-right">{p.addToCart.toLocaleString("pt-BR")}</TableCell>
+                          <TableCell className="text-right">{p.conversion.toFixed(1)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-1">Produtos "vitrine"</h4>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Entre os mais visualizados, mas com conversão para carrinho abaixo de 40% (mínimo 5 views).
+                  </p>
+                  {viewsBreakdown.showcase.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Nenhum produto vitrine identificado.</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Produto</TableHead>
+                          <TableHead className="text-right">Views</TableHead>
+                          <TableHead className="text-right">Add Carrinho</TableHead>
+                          <TableHead className="text-right">Conversão</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {viewsBreakdown.showcase.map((p) => (
+                          <TableRow key={p.product_id}>
+                            <TableCell className="font-medium">{p.product_name}</TableCell>
+                            <TableCell className="text-right">{p.views.toLocaleString("pt-BR")}</TableCell>
+                            <TableCell className="text-right">{p.addToCart.toLocaleString("pt-BR")}</TableCell>
+                            <TableCell className="text-right text-destructive font-semibold">{p.conversion.toFixed(1)}%</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Todos os produtos</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Produto</TableHead>
+                        <TableHead className="text-right">Views</TableHead>
+                        <TableHead className="text-right">Add Carrinho</TableHead>
+                        <TableHead className="text-right">Conversão</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedFullList.map((p) => (
+                        <TableRow key={p.product_id}>
+                          <TableCell className="font-medium">{p.product_name}</TableCell>
+                          <TableCell className="text-right">{p.views.toLocaleString("pt-BR")}</TableCell>
+                          <TableCell className="text-right">{p.addToCart.toLocaleString("pt-BR")}</TableCell>
+                          <TableCell className="text-right">{p.conversion.toFixed(1)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cartModalOpen} onOpenChange={setCartModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Detalhes dos Add ao Carrinho</DialogTitle>
+            <DialogDescription>
+              Período: {startDate} até {endDate}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isCartBreakdownLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : !cartBreakdown || cartBreakdown.totalEvents === 0 ? (
+            <p className="text-muted-foreground text-center py-8">Sem add ao carrinho no período.</p>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Valor Total</p>
+                      <p className="text-2xl font-bold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                        {formatCurrency(cartBreakdown.totalValue)}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Itens Adicionados</p>
+                      <p className="text-2xl font-bold">{cartBreakdown.totalQuantity.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Eventos</p>
+                      <p className="text-2xl font-bold">{cartBreakdown.totalEvents.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Sessões</p>
+                      <p className="text-2xl font-bold">{cartBreakdown.totalSessions.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Por produto</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Produto</TableHead>
+                        <TableHead className="text-right">Qtd</TableHead>
+                        <TableHead className="text-right">Sessões</TableHead>
+                        <TableHead className="text-right">Valor</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {cartBreakdown.byProduct.map((r) => (
+                        <TableRow key={r.product_id}>
+                          <TableCell className="font-medium">{r.product_name}</TableCell>
+                          <TableCell className="text-right">{r.quantity.toLocaleString("pt-BR")}</TableCell>
+                          <TableCell className="text-right">{r.sessions.toLocaleString("pt-BR")}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(r.value)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={checkoutModalOpen} onOpenChange={setCheckoutModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Detalhes do Início de Checkout</DialogTitle>
+            <DialogDescription>
+              Período: {startDate} até {endDate} · Tempo médio entre abrir o checkout e clicar em "Finalizar Pedido"
+              (sessões com mais de 15min são desconsideradas no cálculo)
+            </DialogDescription>
+          </DialogHeader>
+
+          {isCheckoutBreakdownLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : !checkoutBreakdown || checkoutBreakdown.totalCheckoutSessions === 0 ? (
+            <p className="text-muted-foreground text-center py-8">Sem inícios de checkout no período.</p>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Tempo Médio</p>
+                      <p className="text-2xl font-bold" style={{ color: "hsl(280, 65%, 55%)" }}>
+                        {Math.floor(checkoutBreakdown.avgDurationSec / 60)}m {checkoutBreakdown.avgDurationSec % 60}s
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Mediana</p>
+                      <p className="text-2xl font-bold">
+                        {Math.floor(checkoutBreakdown.medianDurationSec / 60)}m {checkoutBreakdown.medianDurationSec % 60}s
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Min / Max</p>
+                      <p className="text-lg font-bold">
+                        {Math.floor(checkoutBreakdown.minDurationSec / 60)}m {checkoutBreakdown.minDurationSec % 60}s
+                        {" · "}
+                        {Math.floor(checkoutBreakdown.maxDurationSec / 60)}m {checkoutBreakdown.maxDurationSec % 60}s
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Sessões em Checkout</p>
+                      <p className="text-2xl font-bold">{checkoutBreakdown.totalCheckoutSessions.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Finalizadas (≤15min)</p>
+                      <p className="text-2xl font-bold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                        {checkoutBreakdown.completedSessions.toLocaleString("pt-BR")}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Carrinhos Abandonados</p>
+                      <p className="text-2xl font-bold text-destructive">
+                        {checkoutBreakdown.abandonedSessions.toLocaleString("pt-BR")}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {abandonedTicket && (
+                  <div className="border-t pt-4">
+                    <h4 className="font-semibold mb-2">Ticket Médio: Real vs Abandonados</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <Card>
+                        <CardContent className="pt-4">
+                          <p className="text-xs text-muted-foreground">Real</p>
+                          <p className="text-2xl font-bold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                            {formatCurrency(abandonedTicket.avgRealTicket)}
+                          </p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="pt-4">
+                          <p className="text-xs text-muted-foreground">Abandonado</p>
+                          <p className="text-2xl font-bold" style={{ color: "hsl(25, 95%, 53%)" }}>
+                            {formatCurrency(abandonedTicket.avgAbandonedTicket)}
+                          </p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="pt-4">
+                          <p className="text-xs text-muted-foreground">Carrinhos Aband.</p>
+                          <p className="text-2xl font-bold">{abandonedTicket.abandonedCount.toLocaleString("pt-BR")}</p>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="pt-4">
+                          <p className="text-xs text-muted-foreground">Potencial Perdido</p>
+                          <p className="text-2xl font-bold text-destructive">
+                            {formatCurrency(abandonedTicket.lostRevenue)}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+                )}
+
+                {checkoutBreakdown.excludedOver15min > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {checkoutBreakdown.excludedOver15min.toLocaleString("pt-BR")} sessão(ões) finalizou(aram) acima de
+                    15min e foram desconsideradas do cálculo da média.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={purchasesModalOpen} onOpenChange={setPurchasesModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Detalhes das Compras Efetivadas</DialogTitle>
+            <DialogDescription>
+              Período: {startDate} até {endDate}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isPurchasesBreakdownLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : !purchasesBreakdown || purchasesBreakdown.totalOrders === 0 ? (
+            <p className="text-muted-foreground text-center py-8">Sem compras no período.</p>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2">
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Valor Total das Vendas</p>
+                      <p className="text-2xl font-bold" style={{ color: "hsl(142, 76%, 36%)" }}>
+                        {formatCurrency(purchasesBreakdown.totalRevenue)}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Pedidos</p>
+                      <p className="text-2xl font-bold">{purchasesBreakdown.totalOrders.toLocaleString("pt-BR")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Ticket Médio</p>
+                      <p className="text-2xl font-bold">{formatCurrency(purchasesBreakdown.avgTicket)}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Métodos de Pagamento</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <Pie
+                          data={purchasesBreakdown.byPaymentMethod}
+                          dataKey="count"
+                          nameKey="method"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          label={(entry: any) => `${entry.method} ${entry.pct.toFixed(1)}%`}
+                        >
+                          {purchasesBreakdown.byPaymentMethod.map((_, i) => (
+                            <Cell key={i} fill={DEVICE_COLORS[i % DEVICE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Método</TableHead>
+                          <TableHead className="text-right">%</TableHead>
+                          <TableHead className="text-right">Pedidos</TableHead>
+                          <TableHead className="text-right">Receita</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {purchasesBreakdown.byPaymentMethod.map((r) => (
+                          <TableRow key={r.method}>
+                            <TableCell className="font-medium capitalize">{r.method}</TableCell>
+                            <TableCell className="text-right">{r.pct.toFixed(1)}%</TableCell>
+                            <TableCell className="text-right">{r.count}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(r.revenue)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="font-semibold mb-2">Top 3 Horários</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Horário</TableHead>
+                          <TableHead className="text-right">Pedidos</TableHead>
+                          <TableHead className="text-right">Receita</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {purchasesBreakdown.topHours.map((r) => (
+                          <TableRow key={r.hour}>
+                            <TableCell className="font-medium">{String(r.hour).padStart(2, '0')}:00 - {String(r.hour).padStart(2, '0')}:59</TableCell>
+                            <TableCell className="text-right">{r.orders}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(r.revenue)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold mb-2">Top 3 Dias da Semana</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Dia</TableHead>
+                          <TableHead className="text-right">Pedidos</TableHead>
+                          <TableHead className="text-right">Receita</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {purchasesBreakdown.topDays.map((r) => (
+                          <TableRow key={r.dayOfWeek}>
+                            <TableCell className="font-medium">{r.label}</TableCell>
+                            <TableCell className="text-right">{r.orders}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(r.revenue)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

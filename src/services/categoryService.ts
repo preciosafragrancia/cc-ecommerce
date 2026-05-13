@@ -9,11 +9,34 @@ import {
   updateDoc,
   deleteDoc,
   orderBy,
+  setDoc,
 } from "firebase/firestore";
-import { Category } from "@/types/menu";
+import { Category, POPULAR_CATEGORY_ID } from "@/types/menu";
+
+/**
+ * Garante que a categoria fixa "Produtos Mais Vendidos" exista no banco.
+ * Se não existir, cria com ordem 0 e visível por padrão.
+ */
+const ensurePopularCategory = async (): Promise<void> => {
+  try {
+    const popularDocRef = doc(db, "categories", POPULAR_CATEGORY_ID);
+    const snap = await getDoc(popularDocRef);
+    if (!snap.exists()) {
+      await setDoc(popularDocRef, {
+        name: "Produtos Mais Vendidos",
+        order: 0,
+        isPopularCategory: true,
+        visible: true,
+      });
+    }
+  } catch (error) {
+    console.error("Erro ao garantir categoria de populares:", error);
+  }
+};
 
 export const getAllCategories = async (): Promise<Category[]> => {
   try {
+    await ensurePopularCategory();
     const categoriesCollection = collection(db, "categories");
     const categoriesSnapshot = await getDocs(
       query(categoriesCollection, orderBy("order", "asc"))

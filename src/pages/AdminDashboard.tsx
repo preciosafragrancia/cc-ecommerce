@@ -4,10 +4,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/useAuth";
-import { ClipboardList, Settings, LogOut, Calculator, Bike, Percent, Building2, Truck, Gift, Megaphone, BarChart3 } from "lucide-react";
+import { useUserRole } from "@/hooks/useUserRole";
+import { ClipboardList, Settings, LogOut, Calculator, Bike, Percent, Building2, Truck, Gift, Megaphone, BarChart3, Paintbrush, Palette, Brain, Cog, Download } from "lucide-react";
 
 const AdminDashboard = () => {
   const { currentUser, logOut } = useAuth();
+  const { isSuperAdmin } = useUserRole();
   const navigate = useNavigate();
 
   if (!currentUser) {
@@ -18,12 +20,16 @@ const AdminDashboard = () => {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Painel de Administração</h1></div>
-        <div className="flex gap-2">
+        <h1 className="text-3xl font-bold">Painel de Administração</h1>
+        <div className="flex flex-col items-end gap-1">
           <Button onClick={logOut} variant="outline" className="flex items-center gap-2">
             <LogOut size={16} />
             Sair
           </Button>
+          {currentUser?.email && (
+            <span className="text-xs text-muted-foreground">{currentUser.email}</span>
+          )}
+        </div>
       </div>
       <div className="mt-8 p-4 bg-gray-50 rounded-lg">
         <h2 className="text-lg font-semibold mb-2">Bem-vindo, Administrador!</h2>
@@ -202,6 +208,78 @@ const AdminDashboard = () => {
             </Button>
           </CardContent>
         </Card>
+
+        <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 p-3 bg-emerald-100 rounded-full w-fit">
+              <Download className="h-8 w-8 text-emerald-600" />
+            </div>
+            <CardTitle className="text-xl">Exportações</CardTitle>
+            <CardDescription>
+              Exporte dados do sistema em formato CSV
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild className="w-full">
+              <Link to="/exportacoes">Acessar</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 p-3 bg-purple-100 rounded-full w-fit">
+              <Palette className="h-8 w-8 text-purple-600" />
+            </div>
+            <CardTitle className="text-xl">Layout da Loja</CardTitle>
+            <CardDescription>
+              Configure Nome, Descrição, Logo, Banner e Cores
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild className="w-full">
+              <Link to="/layout">Configurar</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        {isSuperAdmin && (
+          <>
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="text-center">
+                <div className="mx-auto mb-4 p-3 bg-indigo-100 rounded-full w-fit">
+                  <Brain className="h-8 w-8 text-indigo-600" />
+                </div>
+                <CardTitle className="text-xl">Marketing Intelligence</CardTitle>
+                <CardDescription>
+                  Insights e análises avançadas de marketing
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild className="w-full">
+                  <Link to="/admin-intelligence">Acessar</Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="text-center">
+                <div className="mx-auto mb-4 p-3 bg-slate-100 rounded-full w-fit">
+                  <Cog className="h-8 w-8 text-slate-600" />
+                </div>
+                <CardTitle className="text-xl">Sistema</CardTitle>
+                <CardDescription>
+                  Configurações avançadas do sistema
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild className="w-full">
+                  <Link to="/configuracoes">Acessar</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
     </div>
   );

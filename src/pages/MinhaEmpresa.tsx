@@ -65,12 +65,22 @@ export default function MinhaEmpresa() {
 
       setUserId(userData.id);
 
-      // Buscar dados da empresa
-      const { data: empresaData, error } = await supabase
+      // Buscar dados da empresa — primeiro tenta pelo user_id atual,
+      // se não encontrar, pega o primeiro registro existente (fonte única)
+      let { data: empresaData, error } = await supabase
         .from("empresa_info")
         .select("*")
         .eq("user_id", userData.id)
         .maybeSingle();
+
+      if (!empresaData) {
+        const { data: fallback } = await supabase
+          .from("empresa_info")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+        empresaData = fallback;
+      }
 
       if (error) {
         console.error("Erro ao carregar dados da empresa:", error);

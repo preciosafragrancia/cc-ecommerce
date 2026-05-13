@@ -5,16 +5,32 @@ import { getAllVariations } from "@/services/variationService";
 import { getAllMenuItems } from "@/services/menuItemService";
 import { trackAddToCart, trackRemoveFromCart, trackUpdateCartQuantity } from "@/utils/trackingEvents";
 
+interface ProdutoRef {
+  // tipo: "produto" exige um produto específico; "categoria" exige qualquer item de uma categoria
+  tipo?: "produto" | "categoria";
+  product_id: string;
+  product_name: string;
+  // Quando tipo === "categoria", category_id/name identificam a categoria exigida
+  category_id?: string;
+  category_name?: string;
+  quantidade: number;
+}
+
 interface AppliedCoupon {
   id: string;
   nome: string;
-  tipo: "percentual" | "fixo" | "frete_gratis";
+  tipo: "percentual" | "fixo" | "frete_gratis" | "compre_e_ganhe";
   valor: number;
   usos?: number | null;
   limite_uso?: number | null;
   data_inicio?: string;
   data_fim?: string;
+  produtos_requeridos?: ProdutoRef[] | null;
+  produto_brinde?: ProdutoRef | null;
 }
+
+// Marca itens adicionados como brinde via cupom
+const BRINDE_FLAG = "__couponGiftId" as const;
 
 interface CartContextType {
   cartItems: CartItem[];
@@ -172,14 +188,22 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return variationsTotal;
   };
 
+  // Helper para identificar itens brinde
+  const isGiftItem = (item: any): boolean => !!item?.[BRINDE_FLAG];
+
   // recalcular totais
   useEffect(() => {
     const { total, count } = cartItems.reduce(
       (acc, item) => {
+        // Item brinde: nunca soma ao total
+        if (isGiftItem(item)) {
+          acc.count += item.quantity;
+          return acc;
+        }
+
         let itemTotal = 0;
 
         if (item.isHalfPizza) {
-          // Para pizza meio a meio, usamos o price final + variações (adicionais/borda)
           const basePrice = item.price || 0;
           const variationsTotal = calculateVariationsTotal(item);
           itemTotal = (basePrice + variationsTotal) * item.quantity;
@@ -207,12 +231,145 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else if (appliedCoupon.tipo === "fixo") {
         discount = appliedCoupon.valor;
       }
-      // frete_gratis: discount on items stays 0, frete is handled in Checkout
+      // frete_gratis: handled in Checkout
+      // compre_e_ganhe: brinde já está com preço 0, sem desconto monetário
     }
     setDiscountAmount(discount);
     setFinalTotal(Math.max(0, total - discount));
   }, [cartItems, variations, appliedCoupon]);
 
+  // Verifica se o carrinho satisfaz os produtos exigidos por um cupom compre_e_ganhe
+  // Suporta exigência por produto específico OU por categoria (soma quantidades)
+  const cartSatisfiesRequirements = (
+    items: CartItem[],
+    requeridos: ProdutoRef[]
+  ): boolean => {
+    if (!requeridos?.length) return false;
+    const elegiveis = items.filter((i) => !isGiftItem(i));
+    return requeridos.every((req) => {
+      const ehCategoria = req.tipo === "categoria";
+      const totalNoCarrinho = elegiveis
+        .filter((i) =>
+          ehCategoria
+            ? req.category_id && i.category === req.category_id
+            : i.id === req.product_id
+        )
+        .reduce((sum, i) => sum + (i.quantity || 0), 0);
+      return totalNoCarrinho >= req.quantidade;
+    });
+  };
+
+  // Calcula quantos "ciclos" completos da regra cabem no carrinho atual.
+  // Ex.: regra "2 pizzas → 1 refri" + 5 pizzas = floor(5/2) = 2 ciclos.
+  // Quando há múltiplos requisitos, usa o menor número de ciclos completos.
+  const computeGiftMultiplier = (
+    items: CartItem[],
+    requeridos: ProdutoRef[]
+  ): number => {
+    if (!requeridos?.length) return 0;
+    const elegiveis = items.filter((i) => !isGiftItem(i));
+    let menorCiclo = Infinity;
+    for (const req of requeridos) {
+      if (!req.quantidade || req.quantidade <= 0) continue;
+      const ehCategoria = req.tipo === "categoria";
+      const totalNoCarrinho = elegiveis
+        .filter((i) =>
+          ehCategoria
+            ? req.category_id && i.category === req.category_id
+            : i.id === req.product_id
+        )
+        .reduce((sum, i) => sum + (i.quantity || 0), 0);
+      const ciclos = Math.floor(totalNoCarrinho / req.quantidade);
+      if (ciclos < menorCiclo) menorCiclo = ciclos;
+    }
+    return Number.isFinite(menorCiclo) ? menorCiclo : 0;
+  };
+
+  // Constrói o item brinde com a quantidade já calculada de forma proporcional
+  const buildGiftItem = (
+    coupon: AppliedCoupon,
+    items: CartItem[]
+  ): CartItem | null => {
+    if (!coupon.produto_brinde) return null;
+    const ciclos = computeGiftMultiplier(items, coupon.produtos_requeridos || []);
+    if (ciclos <= 0) return null;
+    const brinde = coupon.produto_brinde;
+    const totalBrindes = (brinde.quantidade || 1) * ciclos;
+    return {
+      id: `gift-${brinde.product_id}-${coupon.id}`,
+      name: `🎁 ${brinde.product_name} (Brinde)`,
+      description: `Brinde do cupom ${coupon.nome}`,
+      price: 0,
+      image: "/placeholder.svg",
+      category: "brinde",
+      quantity: totalBrindes,
+      [BRINDE_FLAG]: brinde.product_id,
+    } as any;
+  };
+
+  // Wrapper que gerencia adição/remoção do brinde
+  const applyCouponInternal = (coupon: AppliedCoupon | null) => {
+    setCartItems((prev) => {
+      // Sempre remove brindes do cupom anterior
+      const semBrindesAntigos = prev.filter((i) => !isGiftItem(i));
+
+      if (!coupon || coupon.tipo !== "compre_e_ganhe" || !coupon.produto_brinde) {
+        setAppliedCoupon(coupon);
+        return semBrindesAntigos;
+      }
+
+      // Validar requisitos mínimos
+      if (!cartSatisfiesRequirements(semBrindesAntigos, coupon.produtos_requeridos || [])) {
+        toast({
+          title: "Requisitos não atendidos",
+          description: "Adicione os produtos exigidos para receber o brinde.",
+          variant: "destructive",
+        });
+        return semBrindesAntigos;
+      }
+
+      const giftCartItem = buildGiftItem(coupon, semBrindesAntigos);
+      setAppliedCoupon(coupon);
+      return giftCartItem ? [...semBrindesAntigos, giftCartItem] : semBrindesAntigos;
+    });
+  };
+
+  // Revalidar brinde quando o carrinho muda: ajusta quantidade proporcional automaticamente
+  useEffect(() => {
+    if (!appliedCoupon || appliedCoupon.tipo !== "compre_e_ganhe") return;
+    const semBrindes = cartItems.filter((i) => !isGiftItem(i));
+    const brindeAtual = cartItems.find((i) => isGiftItem(i));
+    const satisfaz = cartSatisfiesRequirements(semBrindes, appliedCoupon.produtos_requeridos || []);
+
+    if (!satisfaz) {
+      if (brindeAtual) {
+        setCartItems((prev) => prev.filter((i) => !isGiftItem(i)));
+        toast({
+          title: "Brinde removido",
+          description: "Os produtos exigidos pelo cupom foram alterados.",
+        });
+      }
+      return;
+    }
+
+    // Recalcular quantidade proporcional
+    const novoBrinde = buildGiftItem(appliedCoupon, semBrindes);
+    if (!novoBrinde) {
+      if (brindeAtual) {
+        setCartItems((prev) => prev.filter((i) => !isGiftItem(i)));
+      }
+      return;
+    }
+
+    if (!brindeAtual) {
+      setCartItems((prev) => [...prev, novoBrinde]);
+    } else if (brindeAtual.quantity !== novoBrinde.quantity) {
+      setCartItems((prev) =>
+        prev.map((i) => (isGiftItem(i) ? { ...i, quantity: novoBrinde.quantity } : i))
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartItems.filter((i) => !isGiftItem(i)).map((i) => `${i.id}:${i.quantity}`).join("|"), appliedCoupon?.id]);
 
   const enrichSelectedVariations = (selectedVariations?: SelectedVariationGroup[]): SelectedVariationGroup[] => {
     if (!selectedVariations?.length) return [];
@@ -312,6 +469,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const removeFromCart = (id: string) => {
     const removedItem = cartItems.find(item => item.id === id);
+    if (removedItem && isGiftItem(removedItem)) {
+      toast({
+        title: "Brinde",
+        description: "Para remover o brinde, remova o cupom aplicado.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (removedItem) {
       trackRemoveFromCart({
         id: removedItem.id,
@@ -342,6 +507,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const increaseQuantity = (id: string) => {
     const item = cartItems.find(i => i.id === id);
+    if (item && isGiftItem(item)) {
+      toast({
+        title: "Brinde",
+        description: "A quantidade do brinde é calculada automaticamente.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (item) {
       trackUpdateCartQuantity(buildTrackingData(item, item.quantity + 1));
     }
@@ -354,6 +527,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const decreaseQuantity = (id: string) => {
     const item = cartItems.find(i => i.id === id);
+    if (item && isGiftItem(item)) {
+      toast({
+        title: "Brinde",
+        description: "A quantidade do brinde é calculada automaticamente.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (item && item.quantity > 1) {
       trackUpdateCartQuantity(buildTrackingData(item, item.quantity - 1));
     }
@@ -371,7 +552,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateCartItemByIndex = (index: number, updatedFields: Partial<CartItem>) => {
     setCartItems(prevItems =>
-      prevItems.map((item, i) => (i === index ? { ...item, ...updatedFields } : item))
+      prevItems.map((item, i) => {
+        if (i !== index) return item;
+        if (isGiftItem(item)) return item; // brindes não podem ser alterados
+        // Ignorar tentativas de mudar a quantidade vinda de fora para itens normais via este método
+        return { ...item, ...updatedFields };
+      })
     );
   };
 
@@ -396,7 +582,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isCartOpen,
         setIsCartOpen,
         appliedCoupon,
-        setAppliedCoupon,
+        setAppliedCoupon: applyCouponInternal,
         discountAmount,
         finalTotal,
       }}

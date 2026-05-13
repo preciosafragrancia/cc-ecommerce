@@ -3,14 +3,22 @@ import { Link } from "react-router-dom";
 import { subDays, format, parseISO, eachDayOfInterval } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { DateRange } from "react-day-picker";
-import { ArrowLeft, DollarSign, ShoppingBag, TrendingUp, Package, Users, MapPin } from "lucide-react";
+import { ArrowLeft, DollarSign, ShoppingBag, TrendingUp, Package, Users, MapPin, Eye, Star } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getOrdersByDateRange } from "@/services/orderService";
+import { getProductMetrics, type ProductMetric } from "@/services/productEventService";
+import { getAllMenuItems } from "@/services/menuItemService";
 import { Order } from "@/types/order";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   ChartContainer,
   ChartTooltip,
@@ -70,16 +78,73 @@ const AdminMetrics = () => {
     queryFn: async () => {
       if (!dateRange?.from || !dateRange?.to) return [];
       const result = await getOrdersByDateRange(dateRange.from, dateRange.to);
-      // Exclude cancelled orders
       return result.filter((o) => o.status !== "cancelled");
     },
     enabled: !!dateRange?.from && !!dateRange?.to,
   });
 
+  const { data: productMetrics = [] } = useQuery({
+    queryKey: ["product-metrics"],
+    queryFn: getProductMetrics,
+  });
+
+  const { data: menuItems = [] } = useQuery({
+    queryKey: ["menu-items-cost"],
+    queryFn: getAllMenuItems,
+  });
+
+  const mostViewed = useMemo(() => {
+    if (!productMetrics.length) return null;
+    return productMetrics.reduce((best, curr) => curr.views > best.views ? curr : best, productMetrics[0]);
+  }, [productMetrics]);
+
+  const mostSold = useMemo(() => {
+    if (!productMetrics.length) return null;
+    return productMetrics.reduce((best, curr) => curr.sales > best.sales ? curr : best, productMetrics[0]);
+  }, [productMetrics]);
+
+  const top5MostViewed = useMemo(() => {
+    return [...productMetrics]
+      .filter(p => p.views > 0)
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 5);
+  }, [productMetrics]);
+
+  const top5MostSold = useMemo(() => {
+    return [...productMetrics]
+      .filter(p => p.sales > 0)
+      .sort((a, b) => b.sales - a.sales)
+      .slice(0, 5);
+  }, [productMetrics]);
+
+  const [viewedDialogOpen, setViewedDialogOpen] = useState(false);
+  const [soldDialogOpen, setSoldDialogOpen] = useState(false);
+
   const totalVendas = useMemo(
     () => orders.reduce((sum, o) => sum + (o.total || 0), 0),
     [orders]
   );
+
+  const custoProduto = useMemo(() => {
+    const costMap = new Map<string, number>();
+    menuItems.forEach((item) => costMap.set(item.id, item.cost || 0));
+    return orders.reduce((sum, o) => {
+      if (!Array.isArray(o.items)) return sum;
+      return sum + o.items.reduce((s, item) => {
+        const cost = costMap.get(item.menuItemId) || 0;
+        return s + cost * (item.quantity || 1);
+      }, 0);
+    }, 0);
+  }, [orders, menuItems]);
+
+  const custoFrete = useMemo(
+    () => orders.reduce((sum, o) => sum + ((o as any).frete || 0), 0),
+    [orders]
+  );
+
+  const custoTotal = useMemo(() => custoProduto + custoFrete, [custoProduto, custoFrete]);
+
+  const lucratividade = useMemo(() => totalVendas - custoTotal, [totalVendas, custoTotal]);
 
   const totalPedidos = orders.length;
 
@@ -225,7 +290,7 @@ const AdminMetrics = () => {
       ) : (
         <>
           {/* KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">Total das Vendas</CardTitle>
@@ -259,9 +324,156 @@ const AdminMetrics = () => {
                 </p>
               </CardContent>
             </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Custo do Produto</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-destructive">
+                  R$ {custoProduto.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Custo de Frete</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-destructive">
+                  R$ {custoFrete.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Custo Total</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-destructive">
+                  R$ {custoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Lucratividade</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <p className={`text-2xl font-bold ${lucratividade >= 0 ? 'text-green-600' : 'text-destructive'}`}>
+                  R$ {lucratividade.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </p>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Charts */}
+          {/* Produto mais visto & mais vendido */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Produto Mais Visto</CardTitle>
+                <Eye className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {mostViewed && mostViewed.views > 0 ? (
+                  <>
+                    <p className="text-lg font-bold truncate">{mostViewed.product_name}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      👁 {mostViewed.views} visualizações · 🛒 {mostViewed.sales} vendas
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setViewedDialogOpen(true)}
+                      className="text-xs text-primary hover:underline mt-2"
+                    >
+                      Mais Detalhes
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Sem dados ainda</p>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Produto Mais Vendido</CardTitle>
+                <Star className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {mostSold && mostSold.sales > 0 ? (
+                  <>
+                    <p className="text-lg font-bold truncate">{mostSold.product_name}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      🛒 {mostSold.sales} unidades vendidas · 👁 {mostSold.views} visualizações
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setSoldDialogOpen(true)}
+                      className="text-xs text-primary hover:underline mt-2"
+                    >
+                      Mais Detalhes
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Sem dados ainda</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Dialog open={viewedDialogOpen} onOpenChange={setViewedDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Top 5 Produtos Mais Vistos</DialogTitle>
+              </DialogHeader>
+              <div className="divide-y">
+                {top5MostViewed.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4">Sem dados ainda</p>
+                ) : (
+                  top5MostViewed.map((p, idx) => (
+                    <div key={p.product_id} className="flex items-center justify-between py-2 gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-bold text-muted-foreground w-5">{idx + 1}.</span>
+                        <span className="text-sm font-medium truncate">{p.product_name}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground whitespace-nowrap">
+                        👁 {p.views} · 🛒 {p.sales}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={soldDialogOpen} onOpenChange={setSoldDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Top 5 Produtos Mais Vendidos</DialogTitle>
+              </DialogHeader>
+              <div className="divide-y">
+                {top5MostSold.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4">Sem dados ainda</p>
+                ) : (
+                  top5MostSold.map((p, idx) => (
+                    <div key={p.product_id} className="flex items-center justify-between py-2 gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-bold text-muted-foreground w-5">{idx + 1}.</span>
+                        <span className="text-sm font-medium truncate">{p.product_name}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground whitespace-nowrap">
+                        🛒 {p.sales} · 👁 {p.views}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <Card>
               <CardHeader>
@@ -304,9 +516,10 @@ const AdminMetrics = () => {
               <CardTitle className="text-base flex items-center gap-2">
                 <Package className="h-4 w-4" /> Top 5 Produtos
               </CardTitle>
+              <p className="text-xs font-bold text-muted-foreground">Por Número de Pedidos</p>
             </CardHeader>
             <CardContent>
-              <ChartContainer config={topProductsChartConfig} className="h-[350px] w-full">
+              <ChartContainer config={topProductsChartConfig} className="h-[300px] w-full">
                 <BarChart data={top5Produtos} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -327,7 +540,7 @@ const AdminMetrics = () => {
               <p className="text-xs font-bold text-muted-foreground">Por Valor de Vendas</p>
             </CardHeader>
             <CardContent>
-              <ChartContainer config={topProductsValueChartConfig} className="h-[350px] w-full">
+              <ChartContainer config={topProductsValueChartConfig} className="h-[300px] w-full">
                 <BarChart data={top5ProdutosValor} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
@@ -349,7 +562,7 @@ const AdminMetrics = () => {
                 <p className="text-xs font-bold text-muted-foreground">Por número de Pedidos</p>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={topBuyersChartConfig} className="h-[350px] w-full">
+                <ChartContainer config={topBuyersChartConfig} className="h-[300px] w-full">
                   <BarChart data={top5Compradores} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -369,7 +582,7 @@ const AdminMetrics = () => {
                 <p className="text-xs font-bold text-muted-foreground">Por número de Pedidos</p>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={topNeighborhoodsChartConfig} className="h-[350px] w-full">
+                <ChartContainer config={topNeighborhoodsChartConfig} className="h-[300px] w-full">
                   <BarChart data={top5Bairros} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -392,7 +605,7 @@ const AdminMetrics = () => {
                 <p className="text-xs font-bold text-muted-foreground">Por Valor de Vendas</p>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={topBuyersValueChartConfig} className="h-[350px] w-full">
+                <ChartContainer config={topBuyersValueChartConfig} className="h-[300px] w-full">
                   <BarChart data={top5CompradoresValor} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />
@@ -412,7 +625,7 @@ const AdminMetrics = () => {
                 <p className="text-xs font-bold text-muted-foreground">Por Valor de Vendas</p>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={topNeighborhoodsValueChartConfig} className="h-[350px] w-full">
+                <ChartContainer config={topNeighborhoodsValueChartConfig} className="h-[300px] w-full">
                   <BarChart data={top5BairrosValor} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis type="number" fontSize={12} tickLine={false} axisLine={false} />

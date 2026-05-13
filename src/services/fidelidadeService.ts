@@ -370,12 +370,14 @@ export const verificarFidelidade = async (
         };
 
         try {
+          const { withComunicacaoMeta } = await import("@/utils/webhookPayload");
+          const enriched = await withComunicacaoMeta(payload);
           const response = await fetch(
             "https://n8n-n8n-start.yh11mi.easypanel.host/webhook/fidelidade_Aut5",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
+              body: JSON.stringify(enriched),
             }
           );
 

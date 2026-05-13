@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from "react";
-import { MenuItem, Category, VariationGroup, PizzaBorder } from "@/types/menu";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import { MenuItem, Category, VariationGroup, PizzaBorder, POPULAR_CATEGORY_ID } from "@/types/menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Edit, Plus, Trash2, ChevronDown, ChevronUp, AlertTriangle, RefreshCw, Copy, Grid3X3, List } from "lucide-react";
@@ -32,6 +32,38 @@ export const MenuItemsTab = ({
   const [deletingItems, setDeletingItems] = useState<Set<string>>(new Set());
   const [isCleaningUp, setIsCleaningUp] = useState(false);
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
+  const savedScrollRef = useRef<number | null>(null);
+
+  // Restaurar scroll quando o modal fecha (após salvar ou cancelar)
+  // Radix Dialog aplica scroll-lock no body e ao fechar pode resetar a posição.
+  // Por isso reaplicamos várias vezes ao longo de ~600ms para vencer o cleanup do Radix
+  // e o re-render assíncrono causado por onDataChange().
+  useEffect(() => {
+    if (editItem !== null || savedScrollRef.current === null) return;
+    const target = savedScrollRef.current;
+
+    let cancelled = false;
+    const restore = () => {
+      if (cancelled) return;
+      window.scrollTo({ top: target, left: 0, behavior: "auto" });
+      document.documentElement.scrollTop = target;
+      document.body.scrollTop = target;
+    };
+
+    // Sequência agressiva de tentativas para vencer o Radix scroll-lock cleanup
+    const timers: number[] = [];
+    [0, 16, 50, 100, 200, 350, 550].forEach((delay) => {
+      timers.push(window.setTimeout(restore, delay));
+    });
+
+    // Limpa a referência depois da última tentativa
+    timers.push(window.setTimeout(() => { savedScrollRef.current = null; }, 600));
+
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => clearTimeout(t));
+    };
+  }, [editItem, menuItems]);
 
   // Detectar duplicatas
   const duplicateIds = useMemo(() => {
@@ -77,9 +109,19 @@ export const MenuItemsTab = ({
     });
     
     menuItems.forEach(item => {
-      if (grouped[item.category]) {
-        grouped[item.category].items.push(item);
-      } else {
+      const targetCategoryIds = new Set<string>();
+      if (item.category) targetCategoryIds.add(item.category);
+      (item.additionalCategories || []).forEach(id => targetCategoryIds.add(id));
+
+      let placedSomewhere = false;
+      targetCategoryIds.forEach(catId => {
+        if (grouped[catId]) {
+          grouped[catId].items.push(item);
+          placedSomewhere = true;
+        }
+      });
+
+      if (!placedSomewhere) {
         const unknownCategoryId = 'unknown';
         if (!grouped[unknownCategoryId]) {
           grouped[unknownCategoryId] = {
@@ -90,11 +132,19 @@ export const MenuItemsTab = ({
         grouped[unknownCategoryId].items.push(item);
       }
     });
+
+    // Popular fixed category: aggregate all items marked as popular
+    sortedCategories.forEach(category => {
+      if (category.id === POPULAR_CATEGORY_ID || category.isPopularCategory) {
+        grouped[category.id].items = menuItems.filter(item => item.popular === true);
+      }
+    });
     
     return Object.values(grouped);
   }, [menuItems, categories]);
 
   const handleAddItem = () => {
+    savedScrollRef.current = window.scrollY;
     // Filter valid categories for new item
     const validCategories = categories.filter(category => category.id && category.id.trim() !== '');
     const newItem: MenuItem & { isHalfPizza?: boolean } = {
@@ -113,6 +163,7 @@ export const MenuItemsTab = ({
   };
 
   const handleEditItem = (item: MenuItem & { isHalfPizza?: boolean }) => {
+    savedScrollRef.current = window.scrollY;
     const itemToEdit = {
       ...item,
       hasVariations: !!item.variationGroups?.length,
@@ -123,6 +174,7 @@ export const MenuItemsTab = ({
   };
 
   const handleDuplicateItem = (item: MenuItem & { isHalfPizza?: boolean }) => {
+    savedScrollRef.current = window.scrollY;
     const duplicatedItem: MenuItem & { isHalfPizza?: boolean } = {
       ...item,
       id: `temp-${Date.now()}`,

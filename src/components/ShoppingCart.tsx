@@ -13,6 +13,7 @@ import { Variation } from "@/types/menu";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { trackInitiateCheckout } from "@/utils/trackingEvents";
+import { useLayoutSettings } from "@/hooks/useLayoutSettings";
 
 const ShoppingCart: React.FC = () => {
   const {
@@ -32,6 +33,7 @@ const ShoppingCart: React.FC = () => {
   
   
   const { currentUser } = useAuth();
+  const { settings } = useLayoutSettings();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [variations, setVariations] = useState<Variation[]>([]);
@@ -179,11 +181,22 @@ const ShoppingCart: React.FC = () => {
         limite_uso: cupomData.limite_uso,
         data_inicio: cupomData.data_inicio,
         data_fim: cupomData.data_fim,
+        produtos_requeridos: cupomData.produtos_requeridos ?? null,
+        produto_brinde: cupomData.produto_brinde ?? null,
       });
+
+      const descricaoDesconto =
+        cupomData.tipo === "percentual"
+          ? `${cupomData.valor}%`
+          : cupomData.tipo === "frete_gratis"
+          ? "Frete Grátis"
+          : cupomData.tipo === "compre_e_ganhe"
+          ? `🎁 Brinde: ${cupomData.produto_brinde?.product_name || "produto"}`
+          : formatCurrency(cupomData.valor);
 
       toast({
         title: "Cupom aplicado!",
-        description: `Desconto de ${cupomData.tipo === "percentual" ? `${cupomData.valor}%` : formatCurrency(cupomData.valor)} aplicado`,
+        description: `Cupom aplicado: ${descricaoDesconto}`,
       });
 
       setCouponCode("");
@@ -309,13 +322,14 @@ const ShoppingCart: React.FC = () => {
     <>
       {/* Cart Trigger Button */}
       <button
-        className="fixed bottom-6 right-6 z-30 bg-brand w-[40%] py-3 px-4 rounded-xl shadow-lg hover:bg-brand-600 transition-all duration-300 flex items-center justify-center gap-2"
+        className="fixed bottom-6 right-6 z-30 w-[40%] py-3 px-4 rounded-xl shadow-lg transition-all duration-300 flex items-center justify-center gap-2"
         onClick={() => setIsCartOpen(true)}
+        style={{ backgroundColor: settings.cor_botoes, color: settings.cor_fonte_botoes }}
       >
-        <ShoppingBag className="h-5 w-5 text-primary-foreground" />
-        <span className="text-primary-foreground font-semibold text-sm">Carrinho</span>
+        <ShoppingBag className="h-5 w-5" />
+        <span className="font-semibold text-sm">Carrinho</span>
         {itemCount > 0 && (
-          <span className="bg-food-green text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
+          <span className="bg-food-green text-xs rounded-full w-5 h-5 flex items-center justify-center" style={{ color: settings.cor_fonte_botoes }}>
             {itemCount}
           </span>
         )}
@@ -364,6 +378,7 @@ const ShoppingCart: React.FC = () => {
                 const basePrice = item.priceFrom ? 0 : (item.price || 0);
                 const variationsTotal = calculateVariationsTotal(item);
                 const itemTotal = calculateItemTotal(item);
+                const isGift = !!(item as any).__couponGiftId;
 
                 return (
                   <div key={item.id} className="flex border-b pb-4">
@@ -381,12 +396,14 @@ const ShoppingCart: React.FC = () => {
                     <div className="flex-1">
                       <div className="flex justify-between">
                         <h3 className="font-medium">{item.name}</h3>
-                        <button
-                          onClick={() => removeFromCart(item.id)}
-                          className="text-gray-400 hover:text-red-500"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {!isGift && (
+                          <button
+                            onClick={() => removeFromCart(item.id)}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                       
                       {/* Preço base do item */}
@@ -480,19 +497,27 @@ const ShoppingCart: React.FC = () => {
                       )}
                       
                       <div className="flex items-center mt-2">
-                        <button
-                          onClick={() => decreaseQuantity(item.id)}
-                          className="counter-btn"
-                        >
-                          <Minus className="h-4 w-4" />
-                        </button>
-                        <span className="mx-2 w-8 text-center">{item.quantity}</span>
-                        <button
-                          onClick={() => increaseQuantity(item.id)}
-                          className="counter-btn"
-                        >
-                          <Plus className="h-4 w-4" />
-                        </button>
+                        {isGift ? (
+                          <span className="text-sm text-muted-foreground italic">
+                            Quantidade automática: {item.quantity}
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => decreaseQuantity(item.id)}
+                              className="counter-btn"
+                            >
+                              <Minus className="h-4 w-4" />
+                            </button>
+                            <span className="mx-2 w-8 text-center">{item.quantity}</span>
+                            <button
+                              onClick={() => increaseQuantity(item.id)}
+                              className="counter-btn"
+                            >
+                              <Plus className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
                         <div className="ml-auto font-bold">
                           {formatCurrency(itemTotal)}
                         </div>
@@ -539,8 +564,10 @@ const ShoppingCart: React.FC = () => {
                     <span className="font-medium">{appliedCoupon.nome}</span>
                   </div>
                   <p className="text-green-600 text-xs mt-1">
-                    {appliedCoupon.tipo === "frete_gratis" 
-                      ? "🚚 Frete Grátis" 
+                    {appliedCoupon.tipo === "frete_gratis"
+                      ? "🚚 Frete Grátis"
+                      : appliedCoupon.tipo === "compre_e_ganhe"
+                      ? `🎁 Brinde: ${appliedCoupon.produto_brinde?.quantidade || 1}x ${appliedCoupon.produto_brinde?.product_name || ""}`
                       : `Desconto de ${appliedCoupon.tipo === "percentual" ? `${appliedCoupon.valor}%` : formatCurrency(appliedCoupon.valor)}`}
                   </p>
                 </div>

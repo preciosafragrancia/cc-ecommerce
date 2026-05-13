@@ -3,16 +3,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { MenuItem } from "@/types/menu";
 import { formatCurrency } from "@/lib/utils";
-import { Plus, Minus, ShoppingCart } from "lucide-react";
+import { Plus, Minus, ShoppingCart, Pizza } from "lucide-react";
 
 interface QuantityDialogProps {
   item: MenuItem;
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (item: MenuItem, quantity: number) => void;
+  onOpenPizzaCombination?: () => void;
 }
 
-const QuantityDialog: React.FC<QuantityDialogProps> = ({ item, isOpen, onClose, onConfirm }) => {
+const QuantityDialog: React.FC<QuantityDialogProps> = ({ item, isOpen, onClose, onConfirm, onOpenPizzaCombination }) => {
   const [quantity, setQuantity] = useState(1);
 
   const handleOpenChange = (open: boolean) => {
@@ -28,7 +29,14 @@ const QuantityDialog: React.FC<QuantityDialogProps> = ({ item, isOpen, onClose, 
     onClose();
   };
 
+  const handleMeioAMeio = () => {
+    onClose();
+    setQuantity(1);
+    onOpenPizzaCombination?.();
+  };
+
   const total = item.price * quantity;
+  const showMeioAMeio = item.tipo === "pizza" && item.permiteCombinacao;
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -76,8 +84,22 @@ const QuantityDialog: React.FC<QuantityDialogProps> = ({ item, isOpen, onClose, 
           </div>
         </div>
 
-        <Button onClick={handleConfirm} className="w-full">
-          <ShoppingCart className="mr-2 h-4 w-4" />
+        {showMeioAMeio && (
+          <Button
+            variant="outline"
+            onClick={handleMeioAMeio}
+            className="w-full mb-2 border-orange-400 text-orange-600 hover:bg-orange-50"
+          >
+            <Pizza className="mr-2 h-4 w-4" />
+            Quero Pizza Meio a Meio
+          </Button>
+        )}
+
+        <Button 
+          onClick={handleConfirm} 
+          className="w-full bg-green-600 hover:bg-green-700 text-white border-none"
+        >
+          <ShoppingCart className="mr-2 h-4 w-4 text-white" />
           Adicionar {quantity}x — {formatCurrency(total)}
         </Button>
       </DialogContent>

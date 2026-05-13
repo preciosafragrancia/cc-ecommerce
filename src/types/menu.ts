@@ -11,8 +11,10 @@ export interface MenuItem {
   name: string;
   description: string;
   price: number;
+  cost?: number; // Custo do produto
   image: string;
   category: string;
+  additionalCategories?: string[]; // Categorias adicionais — item aparece em múltiplas categorias
   popular?: boolean;
   available?: boolean; // Indica se o produto está disponível
   hasVariations?: boolean;
@@ -56,7 +58,11 @@ export interface Category {
   id: string;
   name: string;
   order?: number;
+  isPopularCategory?: boolean; // Categoria fixa de "Produtos Mais Vendidos"
+  visible?: boolean; // Controla exibição da categoria (usado pela categoria de populares)
 }
+
+export const POPULAR_CATEGORY_ID = "popular-items";
 
 export interface Variation {
   id: string;

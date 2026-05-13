@@ -1,127 +1,64 @@
-
 import React, { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Save, Database, Flame, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, Clock, RefreshCw, MessageCircle, Bell, ShieldCheck, Radio, Activity } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-
-interface CredenciaisSupabase {
-  project_id: string;
-  project_url: string;
-  sb_publishable_key: string;
-}
-
-interface CronConfig {
-  cron_schedule: string;
-}
-
-interface CredenciaisFirebase {
-  firebase_json: string;
-}
+import { invalidateComunicacaoMetaCache } from "@/utils/webhookPayload";
 
 const Configuracoes = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [applyingCron, setApplyingCron] = useState(false);
+  const [savingChat, setSavingChat] = useState(false);
+  const [savingWebhookStatus, setSavingWebhookStatus] = useState(false);
+  const [savingWebhookAuth, setSavingWebhookAuth] = useState(false);
+  const [savingWebhookEventos, setSavingWebhookEventos] = useState(false);
+  const [cronSchedule, setCronSchedule] = useState("0 9 * * *");
+  const [webhookChat, setWebhookChat] = useState("");
+  const [webhookStatus, setWebhookStatus] = useState("");
+  const [webhookAuth, setWebhookAuth] = useState("");
+  const [webhookEventos, setWebhookEventos] = useState("");
+  const [tempoAbandonedCart, setTempoAbandonedCart] = useState("25");
+  const [whatsappVerificationEnabled, setWhatsappVerificationEnabled] = useState(true);
+  const [savingWhatsappToggle, setSavingWhatsappToggle] = useState(false);
+  const [mensagemAtendimento, setMensagemAtendimento] = useState("");
+  const [comunicacaoInstancia, setComunicacaoInstancia] = useState("");
+  const [comunicacaoApikey, setComunicacaoApikey] = useState("");
+  const [savingComunicacao, setSavingComunicacao] = useState(false);
 
-  const [supabaseCredentials, setSupabaseCredentials] = useState<CredenciaisSupabase>({
-    project_id: "",
-    project_url: "",
-    sb_publishable_key: "",
-  });
-
-  const [firebaseCredentials, setFirebaseCredentials] = useState<CredenciaisFirebase>({
-    firebase_json: "",
-  });
-
-  const [cronConfig, setCronConfig] = useState<CronConfig>({
-    cron_schedule: "0 9 * * *",
-  });
+  const currentProjectUrl = (supabase as any).supabaseUrl;
 
   useEffect(() => {
-    loadCredentials();
+    loadConfig();
   }, []);
 
-  const getDefaultsFromSourceFiles = () => {
-    // Valores extraídos de src/integrations/supabase/client.ts
-    const supabaseUrl = "https://aealgiyzbenbhhftwkxb.supabase.co";
-    const supabaseKey = "sb_publishable_segSu4lwfe4romisMtKB2g_TqiO70r8";
-    const projectId = supabaseUrl.replace("https://", "").replace(".supabase.co", "");
-
-    // Valores extraídos de src/lib/firebase.ts
-    const firebaseJson = JSON.stringify({
-      apiKey: "AIzaSyB0BSql846hMmBa_WYiwpTdc5MDWEmDHP8",
-      authDomain: "fb-aut6.firebaseapp.com",
-      projectId: "fb-aut6",
-      storageBucket: "fb-aut6.firebasestorage.app",
-      messagingSenderId: "908504345671",
-      appId: "1:908504345671:web:d4d624f3c6a5c4612a5562",
-    }, null, 2);
-
-    return { projectId, supabaseUrl, supabaseKey, firebaseJson };
-  };
-
-  const seedDefaults = async () => {
-    const defaults = getDefaultsFromSourceFiles();
-    const entries = [
-      { chave: "supabase_project_id", valor: defaults.projectId },
-      { chave: "supabase_project_url", valor: defaults.supabaseUrl },
-      { chave: "supabase_publishable_key", valor: defaults.supabaseKey },
-      { chave: "firebase_credentials", valor: defaults.firebaseJson },
-    ];
-
-    for (const entry of entries) {
-      await supabase
-        .from("configuracoes")
-        .upsert(
-          { chave: entry.chave, valor: entry.valor, updated_at: new Date().toISOString() },
-          { onConflict: "chave" }
-        );
-    }
-  };
-
-  const loadCredentials = async () => {
+  const loadConfig = async () => {
     try {
-      let { data, error } = await supabase
+      const { data, error } = await supabase
         .from("configuracoes")
-        .select("chave, valor");
+        .select("chave, valor")
+        .in("chave", ["cron_ga4_schedule", "webhook_chatassistant", "mensagem_atendimento", "webhook_status_pedido", "webhook_autenticacao", "webhook_eventos", "tempo_disparo_abandoned_cart", "whatsapp_verification_enabled", "comunicacao_instancia", "comunicacao_apikey"]);
 
       if (error) throw error;
 
-      // Se a tabela estiver vazia, popula com os valores dos arquivos fonte
-      const relevantKeys = ["supabase_project_id", "supabase_project_url", "supabase_publishable_key", "firebase_credentials"];
-      const hasDefaults = data?.some((row: any) => relevantKeys.includes(row.chave));
-
-      if (!hasDefaults) {
-        await seedDefaults();
-        const result = await supabase.from("configuracoes").select("chave, valor");
-        data = result.data;
-      }
-
       if (data) {
-        const map: Record<string, string> = {};
-        data.forEach((row: any) => {
-          map[row.chave] = row.valor || "";
-        });
-
-        setSupabaseCredentials({
-          project_id: map["supabase_project_id"] || "",
-          project_url: map["supabase_project_url"] || "",
-          sb_publishable_key: map["supabase_publishable_key"] || "",
-        });
-
-        setFirebaseCredentials({
-          firebase_json: map["firebase_credentials"] || "",
-        });
-
-        setCronConfig({
-          cron_schedule: map["cron_ga4_schedule"] || "0 9 * * *",
+        data.forEach((row) => {
+          if (row.chave === "cron_ga4_schedule" && row.valor) setCronSchedule(row.valor);
+          if (row.chave === "webhook_chatassistant" && row.valor) setWebhookChat(row.valor);
+          if (row.chave === "webhook_status_pedido" && row.valor) setWebhookStatus(row.valor);
+          if (row.chave === "webhook_autenticacao" && row.valor) setWebhookAuth(row.valor);
+          if (row.chave === "webhook_eventos" && row.valor) setWebhookEventos(row.valor);
+          if (row.chave === "tempo_disparo_abandoned_cart" && row.valor) setTempoAbandonedCart(row.valor);
+          if (row.chave === "mensagem_atendimento" && row.valor) setMensagemAtendimento(row.valor);
+          if (row.chave === "whatsapp_verification_enabled") setWhatsappVerificationEnabled(row.valor !== "false");
+          if (row.chave === "comunicacao_instancia" && row.valor) setComunicacaoInstancia(row.valor);
+          if (row.chave === "comunicacao_apikey" && row.valor) setComunicacaoApikey(row.valor);
         });
       }
     } catch (error) {
@@ -131,40 +68,71 @@ const Configuracoes = () => {
     }
   };
 
-  const saveConfig = async (chave: string, valor: string) => {
-    const { error } = await supabase
-      .from("configuracoes")
-      .upsert(
-        { chave, valor, updated_at: new Date().toISOString() },
-        { onConflict: "chave" }
-      );
-    if (error) throw error;
+  const handleUpdateCron = async () => {
+    setApplyingCron(true);
+    try {
+      const { error: dbError } = await supabase
+        .from("configuracoes")
+        .upsert(
+          { chave: "cron_ga4_schedule", valor: cronSchedule, updated_at: new Date().toISOString() },
+          { onConflict: "chave" }
+        );
+      if (dbError) throw dbError;
+
+      const { data, error: funcError } = await supabase.functions.invoke("update-cron", {
+        body: { schedule: cronSchedule },
+      });
+      if (funcError) throw funcError;
+
+      toast({ title: "Sucesso!", description: `Agendamento atualizado para: ${cronSchedule}` });
+    } catch (error: any) {
+      console.error("Erro na operação:", error);
+      toast({ title: "Erro ao atualizar", description: error.message || "Ocorreu um erro inesperado.", variant: "destructive" });
+    } finally {
+      setApplyingCron(false);
+    }
   };
 
-  const handleSave = async () => {
-    setSaving(true);
+  const handleSaveChatConfig = async () => {
+    setSavingChat(true);
     try {
-      await Promise.all([
-        saveConfig("supabase_project_id", supabaseCredentials.project_id),
-        saveConfig("supabase_project_url", supabaseCredentials.project_url),
-        saveConfig("supabase_publishable_key", supabaseCredentials.sb_publishable_key),
-        saveConfig("firebase_credentials", firebaseCredentials.firebase_json),
-        saveConfig("cron_ga4_schedule", cronConfig.cron_schedule),
-      ]);
-
-      toast({
-        title: "Configurações salvas",
-        description: "Todas as credenciais foram atualizadas com sucesso.",
-      });
-    } catch (error) {
-      console.error("Erro ao salvar:", error);
-      toast({
-        title: "Erro ao salvar",
-        description: "Não foi possível salvar as configurações.",
-        variant: "destructive",
-      });
+      for (const { chave, valor } of [
+        { chave: "webhook_chatassistant", valor: webhookChat },
+        { chave: "webhook_status_pedido", valor: webhookStatus },
+        { chave: "mensagem_atendimento", valor: mensagemAtendimento },
+      ]) {
+        const { error } = await supabase
+          .from("configuracoes")
+          .upsert({ chave, valor, updated_at: new Date().toISOString() }, { onConflict: "chave" });
+        if (error) throw error;
+      }
+      toast({ title: "Sucesso!", description: "Configurações do chat salvas." });
+    } catch (error: any) {
+      console.error("Erro ao salvar chat:", error);
+      toast({ title: "Erro ao salvar", description: error.message || "Ocorreu um erro inesperado.", variant: "destructive" });
     } finally {
-      setSaving(false);
+      setSavingChat(false);
+    }
+  };
+
+  const handleSaveComunicacao = async () => {
+    setSavingComunicacao(true);
+    try {
+      for (const { chave, valor } of [
+        { chave: "comunicacao_instancia", valor: comunicacaoInstancia },
+        { chave: "comunicacao_apikey", valor: comunicacaoApikey },
+      ]) {
+        const { error } = await supabase
+          .from("configuracoes")
+          .upsert({ chave, valor, updated_at: new Date().toISOString() }, { onConflict: "chave" });
+        if (error) throw error;
+      }
+      invalidateComunicacaoMetaCache();
+      toast({ title: "Sucesso!", description: "Configurações de comunicação salvas." });
+    } catch (error: any) {
+      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
+    } finally {
+      setSavingComunicacao(false);
     }
   };
 
@@ -183,75 +151,54 @@ const Configuracoes = () => {
           <Button variant="ghost" size="icon" onClick={() => navigate("/admin-dashboard")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
+          <h1 className="text-2xl font-bold text-foreground">Configurações do Sistema</h1>
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8 max-w-3xl space-y-8">
-        {/* Supabase */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <Database className="h-6 w-6 text-primary" />
-              <div>
-                <CardTitle>Credenciais Supabase</CardTitle>
-                <CardDescription>Configurações de conexão com o Supabase</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="project_id">Project ID</Label>
-              <Input
-                id="project_id"
-                value={supabaseCredentials.project_id}
-                onChange={(e) => setSupabaseCredentials((prev) => ({ ...prev, project_id: e.target.value }))}
-                placeholder="Ex: aealgiyzbenbhhftwkxb"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="project_url">Project URL</Label>
-              <Input
-                id="project_url"
-                value={supabaseCredentials.project_url}
-                onChange={(e) => setSupabaseCredentials((prev) => ({ ...prev, project_url: e.target.value }))}
-                placeholder="Ex: https://xxxxx.supabase.co"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sb_key">SB Publishable Key</Label>
-              <Input
-                id="sb_key"
-                value={supabaseCredentials.sb_publishable_key}
-                onChange={(e) => setSupabaseCredentials((prev) => ({ ...prev, sb_publishable_key: e.target.value }))}
-                placeholder="eyJhbGciOiJIUzI1NiIs..."
-              />
-            </div>
-          </CardContent>
-        </Card>
+      <div className="container mx-auto px-4 py-8 max-w-2xl space-y-6">
+        <div className="p-4 bg-muted/50 rounded-lg border text-xs text-muted-foreground mb-4">
+          <p><strong>Projeto Conectado:</strong> {currentProjectUrl}</p>
+        </div>
 
-        {/* Firebase */}
+        {/* Comunicação */}
         <Card>
           <CardHeader>
             <div className="flex items-center gap-3">
-              <Flame className="h-6 w-6 text-orange-500" />
+              <Radio className="h-6 w-6 text-primary" />
               <div>
-                <CardTitle>Credenciais Firebase</CardTitle>
-                <CardDescription>JSON de configuração do Firebase</CardDescription>
+                <CardTitle>Comunicação</CardTitle>
+                <CardDescription>Credenciais enviadas no payload de todos os webhooks do sistema.</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              <Label htmlFor="firebase_json">Credenciais Firebase (JSON)</Label>
-              <Textarea
-                id="firebase_json"
-                rows={10}
-                value={firebaseCredentials.firebase_json}
-                onChange={(e) => setFirebaseCredentials({ firebase_json: e.target.value })}
-                placeholder={`{\n  "apiKey": "...",\n  "authDomain": "...",\n  "projectId": "...",\n  "storageBucket": "...",\n  "messagingSenderId": "...",\n  "appId": "..."\n}`}
-                className="font-mono text-sm"
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="comunicacao_instancia">Instância</Label>
+                <Input
+                  id="comunicacao_instancia"
+                  value={comunicacaoInstancia}
+                  onChange={(e) => setComunicacaoInstancia(e.target.value)}
+                  placeholder="nome-da-instancia"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="comunicacao_apikey">APIKEY</Label>
+                <Input
+                  id="comunicacao_apikey"
+                  type="password"
+                  value={comunicacaoApikey}
+                  onChange={(e) => setComunicacaoApikey(e.target.value)}
+                  placeholder="••••••••"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Esses dados, junto ao ID da empresa, serão enviados em todos os webhooks disparados pelo sistema.
+                </p>
+              </div>
+              <Button className="w-full" disabled={savingComunicacao} onClick={handleSaveComunicacao}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${savingComunicacao ? "animate-spin" : ""}`} />
+                {savingComunicacao ? "Salvando..." : "Salvar Comunicação"}
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -260,71 +207,270 @@ const Configuracoes = () => {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-3">
-              <Clock className="h-6 w-6 text-muted-foreground" />
+              <Clock className="h-6 w-6 text-primary" />
               <div>
-                <CardTitle>Agendamento Cron (GA4 Snapshot)</CardTitle>
-                <CardDescription>Expressão cron para coleta automática de dados do GA4. Padrão: 0 9 * * * (diariamente às 09:00 UTC / 06:00 BRT)</CardDescription>
+                <CardTitle>Agendamento Cron (GA4)</CardTitle>
+                <CardDescription>Define a frequência com que os dados do Analytics são coletados.</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="cron_schedule">Expressão Cron</Label>
-                <Input
-                  id="cron_schedule"
-                  value={cronConfig.cron_schedule}
-                  onChange={(e) => setCronConfig({ cron_schedule: e.target.value })}
-                  placeholder="0 9 * * *"
-                  className="font-mono"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Formato: minuto hora dia mês dia_semana. Exemplo: "0 9 * * *" = todos os dias às 09:00 UTC (06:00 BRT).
+                <Label htmlFor="cron_schedule">Expressão Cron (Minuto Hora Dia Mês Semana)</Label>
+                <Input id="cron_schedule" value={cronSchedule} onChange={(e) => setCronSchedule(e.target.value)} placeholder="0 9 * * *" className="font-mono text-lg" />
+                <p className="text-sm text-muted-foreground">
+                  Exemplo: <code className="bg-muted px-1">0 9 * * *</code> executa diariamente às 09h UTC (06h BRT).
                 </p>
               </div>
-              <Button
-                variant="outline"
-                disabled={applyingCron}
-                onClick={async () => {
-                  setApplyingCron(true);
-                  try {
-                    // Save to configuracoes first
-                    await saveConfig("cron_ga4_schedule", cronConfig.cron_schedule);
-                    
-                    // Apply via edge function
-                    const { data, error } = await supabase.functions.invoke("update-cron", {
-                      body: { schedule: cronConfig.cron_schedule },
-                    });
-                    if (error) throw error;
-                    toast({
-                      title: "Cron atualizado",
-                      description: `Agendamento aplicado: ${cronConfig.cron_schedule}`,
-                    });
-                  } catch (error: any) {
-                    console.error("Erro ao aplicar cron:", error);
-                    toast({
-                      title: "Erro ao aplicar cron",
-                      description: error.message || "Não foi possível atualizar o agendamento.",
-                      variant: "destructive",
-                    });
-                  } finally {
-                    setApplyingCron(false);
-                  }
-                }}
-              >
+              <Button className="w-full" disabled={applyingCron} onClick={handleUpdateCron}>
                 <RefreshCw className={`h-4 w-4 mr-2 ${applyingCron ? "animate-spin" : ""}`} />
-                {applyingCron ? "Aplicando..." : "Aplicar Agendamento"}
+                {applyingCron ? "Atualizando Agendamento..." : "Salvar e Aplicar Agendamento"}
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving} size="lg">
-            <Save className="h-4 w-4 mr-2" />
-            {saving ? "Salvando..." : "Salvar Configurações"}
-          </Button>
-        </div>
+        {/* Webhook Alerta de Status */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <Bell className="h-6 w-6 text-primary" />
+              <div>
+                <CardTitle>Webhook Alerta de Status</CardTitle>
+                <CardDescription>URL do webhook acionado quando o status de um pedido é alterado.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="webhook_status">URL do Webhook</Label>
+                <Input
+                  id="webhook_status"
+                  value={webhookStatus}
+                  onChange={(e) => setWebhookStatus(e.target.value)}
+                  placeholder="https://seu-webhook.com/status_pedido"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Essa URL será chamada automaticamente ao alterar o status de um pedido no painel.
+                </p>
+              </div>
+              <Button className="w-full" disabled={savingWebhookStatus} onClick={async () => {
+                setSavingWebhookStatus(true);
+                try {
+                  const { error } = await supabase
+                    .from("configuracoes")
+                    .upsert({ chave: "webhook_status_pedido", valor: webhookStatus, updated_at: new Date().toISOString() }, { onConflict: "chave" });
+                  if (error) throw error;
+                  toast({ title: "Sucesso!", description: "Webhook de status salvo." });
+                } catch (error: any) {
+                  toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
+                } finally {
+                  setSavingWebhookStatus(false);
+                }
+              }}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${savingWebhookStatus ? "animate-spin" : ""}`} />
+                {savingWebhookStatus ? "Salvando..." : "Salvar Webhook de Status"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Webhook Autenticação */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="h-6 w-6 text-primary" />
+              <div>
+                <CardTitle>Webhook Autenticação</CardTitle>
+                <CardDescription>URL do webhook acionado para enviar o código de verificação por WhatsApp no signup.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
+                <div className="space-y-0.5 pr-4">
+                  <Label htmlFor="whatsapp_verification_toggle" className="text-base">Usar Verificação por WhatsApp</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Quando habilitado, o signup exige confirmação do código enviado por WhatsApp.
+                  </p>
+                </div>
+                <Switch
+                  id="whatsapp_verification_toggle"
+                  checked={whatsappVerificationEnabled}
+                  disabled={savingWhatsappToggle}
+                  onCheckedChange={async (checked) => {
+                    setSavingWhatsappToggle(true);
+                    const prev = whatsappVerificationEnabled;
+                    setWhatsappVerificationEnabled(checked);
+                    try {
+                      const { error } = await supabase
+                        .from("configuracoes")
+                        .upsert(
+                          { chave: "whatsapp_verification_enabled", valor: checked ? "true" : "false", updated_at: new Date().toISOString() },
+                          { onConflict: "chave" }
+                        );
+                      if (error) throw error;
+                      toast({ title: "Sucesso!", description: `Verificação por WhatsApp ${checked ? "habilitada" : "desabilitada"}.` });
+                    } catch (error: any) {
+                      setWhatsappVerificationEnabled(prev);
+                      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
+                    } finally {
+                      setSavingWhatsappToggle(false);
+                    }
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="webhook_auth">URL do Webhook</Label>
+                <Input
+                  id="webhook_auth"
+                  value={webhookAuth}
+                  onChange={(e) => setWebhookAuth(e.target.value)}
+                  placeholder="https://seu-webhook.com/autenticacao"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Essa URL receberá o telefone do cliente para envio do código de autenticação via WhatsApp.
+                </p>
+              </div>
+              <Button className="w-full" disabled={savingWebhookAuth} onClick={async () => {
+                setSavingWebhookAuth(true);
+                try {
+                  const { error } = await supabase
+                    .from("configuracoes")
+                    .upsert({ chave: "webhook_autenticacao", valor: webhookAuth, updated_at: new Date().toISOString() }, { onConflict: "chave" });
+                  if (error) throw error;
+                  toast({ title: "Sucesso!", description: "Webhook de autenticação salvo." });
+                } catch (error: any) {
+                  toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
+                } finally {
+                  setSavingWebhookAuth(false);
+                }
+              }}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${savingWebhookAuth ? "animate-spin" : ""}`} />
+                {savingWebhookAuth ? "Salvando..." : "Salvar Webhook de Autenticação"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Webhook Eventos */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <Activity className="h-6 w-6 text-primary" />
+              <div>
+                <CardTitle>Webhook Eventos</CardTitle>
+                <CardDescription>URL acionada quando ocorre o evento <code>abandoned_cart</code>. O payload inclui todos os eventos da sessão e os dados do usuário logado.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="webhook_eventos">URL do Webhook</Label>
+                <Input
+                  id="webhook_eventos"
+                  value={webhookEventos}
+                  onChange={(e) => setWebhookEventos(e.target.value)}
+                  placeholder="https://seu-webhook.com/eventos"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Disparado automaticamente quando um carrinho é abandonado (após o tempo configurado abaixo no checkout sem finalizar).
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tempo_disparo_abandoned_cart">Tempo disparo abandoned_cart (minutos)</Label>
+                <Input
+                  id="tempo_disparo_abandoned_cart"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={tempoAbandonedCart}
+                  onChange={(e) => setTempoAbandonedCart(e.target.value)}
+                  placeholder="25"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Quantos minutos o usuário precisa permanecer no checkout sem finalizar para disparar o evento. Padrão: 25 minutos.
+                </p>
+              </div>
+              <Button className="w-full" disabled={savingWebhookEventos} onClick={async () => {
+                setSavingWebhookEventos(true);
+                try {
+                  const minutes = parseFloat(tempoAbandonedCart);
+                  if (isNaN(minutes) || minutes <= 0) {
+                    throw new Error("Informe um tempo válido em minutos (maior que 0).");
+                  }
+                  for (const { chave, valor } of [
+                    { chave: "webhook_eventos", valor: webhookEventos },
+                    { chave: "tempo_disparo_abandoned_cart", valor: String(minutes) },
+                  ]) {
+                    const { error } = await supabase
+                      .from("configuracoes")
+                      .upsert({ chave, valor, updated_at: new Date().toISOString() }, { onConflict: "chave" });
+                    if (error) throw error;
+                  }
+                  toast({ title: "Sucesso!", description: "Webhook de eventos salvo." });
+                } catch (error: any) {
+                  toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" });
+                } finally {
+                  setSavingWebhookEventos(false);
+                }
+              }}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${savingWebhookEventos ? "animate-spin" : ""}`} />
+                {savingWebhookEventos ? "Salvando..." : "Salvar Webhook de Eventos"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Chat Assistant Config */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <MessageCircle className="h-6 w-6 text-primary" />
+              <div>
+                <CardTitle>Assistente Virtual (Chat)</CardTitle>
+                <CardDescription>Configure o webhook e a mensagem inicial do chat de atendimento.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="webhook_chat">Webhook Chatassistant</Label>
+                <Input
+                  id="webhook_chat"
+                  value={webhookChat}
+                  onChange={(e) => setWebhookChat(e.target.value)}
+                  placeholder="https://seu-webhook.com/chatassistant"
+                />
+                <p className="text-sm text-muted-foreground">
+                  URL do webhook que será acionado pelo botão "Fale Conosco".
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mensagem_atendimento">Mensagem de Atendimento</Label>
+                <Textarea
+                  id="mensagem_atendimento"
+                  value={mensagemAtendimento}
+                  onChange={(e) => setMensagemAtendimento(e.target.value)}
+                  placeholder="Olá 👋! Sou o atendente virtual! Posso te ajudar com informações ou acompanhar seu pedido 😊"
+                  rows={3}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Mensagem inicial exibida quando o usuário abre o chat.
+                </p>
+              </div>
+              <Button className="w-full" disabled={savingChat} onClick={handleSaveChatConfig}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${savingChat ? "animate-spin" : ""}`} />
+                {savingChat ? "Salvando..." : "Salvar Configurações do Chat"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

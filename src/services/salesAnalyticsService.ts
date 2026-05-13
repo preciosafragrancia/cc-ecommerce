@@ -6,6 +6,9 @@ type SalesOrderRow = {
   status_atual: string | null;
   utm_source?: string | null;
   utm_campaign?: string | null;
+  utm_medium?: string | null;
+  utm_content?: string | null;
+  utm_term?: string | null;
 };
 
 const buildUtcRangeFromLocalDates = (startDate: string, endDate: string) => {
@@ -272,4 +275,88 @@ export const fetchItemPerformance = async (startDate: string, endDate: string): 
   return Array.from(map.entries())
     .map(([name, value]) => ({ name, ...value }))
     .sort((a, b) => b.revenue - a.revenue);
+};
+
+// ---- Sales by UTM medium ----
+export interface SalesByMediumRow {
+  medium: string;
+  orders: number;
+  revenue: number;
+}
+
+export const fetchSalesByMedium = async (startDate: string, endDate: string): Promise<SalesByMediumRow[]> => {
+  const data = await fetchSalesOrders(startDate, endDate, "data_criacao, utm_medium, valor_total, status_atual");
+
+  const map = new Map<string, { orders: number; revenue: number }>();
+  data.forEach((row) => {
+    const medium = row.utm_medium?.trim();
+    if (!medium) return;
+
+    const existing = map.get(medium) || { orders: 0, revenue: 0 };
+    map.set(medium, {
+      orders: existing.orders + 1,
+      revenue: existing.revenue + Number(row.valor_total || 0),
+    });
+  });
+
+  return Array.from(map.entries())
+    .map(([medium, value]) => ({ medium, ...value }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 10);
+};
+
+// ---- Sales by UTM content ----
+export interface SalesByContentRow {
+  content: string;
+  orders: number;
+  revenue: number;
+}
+
+export const fetchSalesByContent = async (startDate: string, endDate: string): Promise<SalesByContentRow[]> => {
+  const data = await fetchSalesOrders(startDate, endDate, "data_criacao, utm_content, valor_total, status_atual");
+
+  const map = new Map<string, { orders: number; revenue: number }>();
+  data.forEach((row) => {
+    const content = row.utm_content?.trim();
+    if (!content) return;
+
+    const existing = map.get(content) || { orders: 0, revenue: 0 };
+    map.set(content, {
+      orders: existing.orders + 1,
+      revenue: existing.revenue + Number(row.valor_total || 0),
+    });
+  });
+
+  return Array.from(map.entries())
+    .map(([content, value]) => ({ content, ...value }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 10);
+};
+
+// ---- Sales by UTM term ----
+export interface SalesByTermRow {
+  term: string;
+  orders: number;
+  revenue: number;
+}
+
+export const fetchSalesByTerm = async (startDate: string, endDate: string): Promise<SalesByTermRow[]> => {
+  const data = await fetchSalesOrders(startDate, endDate, "data_criacao, utm_term, valor_total, status_atual");
+
+  const map = new Map<string, { orders: number; revenue: number }>();
+  data.forEach((row) => {
+    const term = row.utm_term?.trim();
+    if (!term) return;
+
+    const existing = map.get(term) || { orders: 0, revenue: 0 };
+    map.set(term, {
+      orders: existing.orders + 1,
+      revenue: existing.revenue + Number(row.valor_total || 0),
+    });
+  });
+
+  return Array.from(map.entries())
+    .map(([term, value]) => ({ term, ...value }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 10);
 };

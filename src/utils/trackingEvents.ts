@@ -9,6 +9,8 @@
 
 import { CartItem } from '@/types/menu';
 import { auth } from '@/lib/firebase';
+import { trackProductEvent, trackProductEventsBatch } from '@/services/productEventService';
+import { resolveSession } from '@/utils/sessionId';
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -118,6 +120,76 @@ const calculateItemValue = (item: CartItem): number => {
 // ─── Events ───────────────────────────────────────────────
 
 /**
+ * MenuVisit — disparado quando o usuário acessa o cardápio.
+ *
+ * Usa visitor_id (persistente) + session_id (sliding window de 30min) para:
+ *  - NÃO contar reload/navegação dentro da mesma sessão como nova visita
+ *  - Diferenciar visitante NOVO (primeiro visitor_id) de RECORRENTE (visitor já existia)
+ *
+ * Só registra evento quando uma nova sessão começa.
+ */
+const MENU_VISIT_TRACKED_KEY = 'lov_menu_visit_tracked_session';
+
+export const trackMenuVisit = () => {
+  try {
+    const { sessionId, isReturningVisitor } = resolveSession();
+
+    // Garante que registramos apenas uma visita por sessão (independente de quem
+    // criou a sessão primeiro — ex.: ChatAssistant via useSessionId no render).
+    let alreadyTrackedSession: string | null = null;
+    try {
+      alreadyTrackedSession = localStorage.getItem(MENU_VISIT_TRACKED_KEY);
+    } catch { /* noop */ }
+
+    if (alreadyTrackedSession === sessionId) return;
+
+    try {
+      localStorage.setItem(MENU_VISIT_TRACKED_KEY, sessionId);
+    } catch { /* noop */ }
+
+    // A classificação nova/recorrente continua baseada no visitor_id:
+    // se o visitor_id já existia antes do resolveSession desta sessão, é recorrente.
+    // Como ChatAssistant pode ter chamado resolveSession antes, usamos um marcador
+    // adicional para o "primeiro visitor": se não houver registro, é primeira visita.
+    const FIRST_VISIT_KEY = 'lov_visitor_first_visit_done';
+    let firstVisitDone = false;
+    try {
+      firstVisitDone = localStorage.getItem(FIRST_VISIT_KEY) === '1';
+      if (!firstVisitDone) localStorage.setItem(FIRST_VISIT_KEY, '1');
+    } catch { /* noop */ }
+
+    const isReturning = firstVisitDone;
+    const eventType = isReturning ? 'visita_cardapio_recorrente' : 'visita_cardapio_nova';
+    const eventName = eventType;
+
+    // Persist to Supabase (já inclui visitor_id + session_id automaticamente)
+    trackProductEvent({
+      product_id: '__menu__',
+      product_name: 'Cardápio',
+      event_type: eventType,
+      price: 0,
+      quantity: 1,
+    });
+
+    getHashedUid().then(hashedUid => {
+      window.fbq?.('trackCustom', eventName, {
+        visitor_type: isReturning ? 'returning' : 'new',
+        ...(hashedUid ? { external_id: hashedUid } : {}),
+      });
+    });
+
+    pushDataLayer({
+      event: 'visitas_cardapio',
+      visit_type: isReturning ? 'recorrente' : 'nova',
+      visitor_type: isReturning ? 'returning' : 'new',
+    });
+  } catch (e) {
+    console.error('trackMenuVisit error:', e);
+  }
+};
+
+
+/**
  * ViewContent — fired when user opens a product detail / variation dialog.
  */
 export const trackViewContent = (item: {
@@ -129,6 +201,15 @@ export const trackViewContent = (item: {
   permiteCombinacao?: boolean;
 }) => {
   try {
+    // Persist to Supabase
+    trackProductEvent({
+      product_id: item.id,
+      product_name: item.name,
+      event_type: 'view_item',
+      price: item.price,
+      category: item.category,
+    });
+
     fbqWithUid('track', 'ViewContent', {
       content_ids: [item.id],
       content_name: item.name,
@@ -174,6 +255,16 @@ export const trackAddToCart = (data: {
   combination?: { sabor1: { name: string }; sabor2: { name: string }; tamanho: string };
 }) => {
   try {
+    // Persist to Supabase
+    trackProductEvent({
+      product_id: data.id,
+      product_name: data.name,
+      event_type: 'add_to_cart',
+      price: data.price,
+      category: data.category,
+      quantity: data.quantity,
+    });
+
     const totalValue = data.price * data.quantity;
 
     fbqWithUid('track', 'AddToCart', {
@@ -222,6 +313,20 @@ export const trackInitiateCheckout = (cartItems: CartItem[], totalValue: number)
     const contentIds = cartItems.map((i) => i.id);
     const numItems = cartItems.reduce((sum, i) => sum + i.quantity, 0);
 
+    // Persist begin_checkout to Supabase (one event per item, mantém visitor_id/session_id)
+    if (cartItems.length > 0) {
+      trackProductEventsBatch(
+        cartItems.map(item => ({
+          product_id: item.id,
+          product_name: item.name,
+          event_type: 'begin_checkout' as const,
+          price: item.price,
+          category: item.category,
+          quantity: item.quantity,
+        }))
+      );
+    }
+
     fbqWithUid('track', 'InitiateCheckout', {
       content_ids: contentIds,
       content_type: 'product',
@@ -244,8 +349,68 @@ export const trackInitiateCheckout = (cartItems: CartItem[], totalValue: number)
 };
 
 /**
- * ViewItemList — fired when a category/section of items is displayed.
+ * AbandonedCart — disparado quando o usuário fica >30min na página de checkout sem finalizar.
  */
+export const trackAbandonedCart = (cartItems: CartItem[], totalValue: number) => {
+  try {
+    if (cartItems.length > 0) {
+      trackProductEventsBatch(
+        cartItems.map(item => ({
+          product_id: item.id,
+          product_name: item.name,
+          event_type: 'abandoned_cart' as const,
+          price: item.price,
+          category: item.category,
+          quantity: item.quantity,
+        }))
+      );
+    }
+    fbqWithUid('trackCustom', 'AbandonedCart', {
+      content_ids: cartItems.map(i => i.id),
+      currency: 'BRL',
+      value: totalValue.toFixed(2),
+      num_items: cartItems.reduce((s, i) => s + i.quantity, 0),
+    });
+    pushDataLayer({
+      event: 'abandoned_cart',
+      ecommerce: {
+        currency: 'BRL',
+        value: totalValue,
+        items: cartItems.map((item, i) => buildItemPayload(item, i)),
+      },
+    });
+  } catch (e) {
+    console.error('trackAbandonedCart error:', e);
+  }
+};
+
+/**
+ * CheckoutFinalize — disparado no clique do botão "Finalizar Pedido".
+ * Usado para medir o tempo entre abrir o checkout e clicar em finalizar.
+ */
+export const trackCheckoutFinalize = (cartItems: CartItem[], totalValue: number, durationMs: number) => {
+  try {
+    if (cartItems.length > 0) {
+      trackProductEventsBatch(
+        cartItems.map(item => ({
+          product_id: item.id,
+          product_name: item.name,
+          event_type: 'checkout_finalize' as const,
+          price: item.price,
+          category: item.category,
+          quantity: item.quantity,
+        }))
+      );
+    }
+    pushDataLayer({
+      event: 'checkout_finalize',
+      duration_ms: durationMs,
+      ecommerce: { currency: 'BRL', value: totalValue },
+    });
+  } catch (e) {
+    console.error('trackCheckoutFinalize error:', e);
+  }
+};
 export const trackViewItemList = (params: {
   listName: string;
   items: Array<{ id: string; name: string; price: number; category?: string }>;
@@ -374,6 +539,16 @@ export const trackRemoveFromCart = (data: {
   category?: string;
 }) => {
   try {
+    // Persist to Supabase
+    trackProductEvent({
+      product_id: data.id,
+      product_name: data.name,
+      event_type: 'remove_from_cart',
+      price: data.price,
+      category: data.category,
+      quantity: data.quantity,
+    });
+
     const totalValue = data.price * data.quantity;
 
     pushDataLayer({
@@ -412,6 +587,19 @@ export const trackPurchase = (params: {
 }) => {
   try {
     const { orderId, cartItems, total, subtotal, frete, discount, couponCode, paymentMethod } = params;
+
+    // Persist purchase events to Supabase (one per item)
+    trackProductEventsBatch(
+      cartItems.map(item => ({
+        product_id: item.id,
+        product_name: item.name,
+        event_type: 'purchase' as const,
+        price: item.price,
+        category: item.category,
+        quantity: item.quantity,
+      }))
+    );
+
     const contentIds = cartItems.map((i) => i.id);
     const numItems = cartItems.reduce((sum, i) => sum + i.quantity, 0);
 

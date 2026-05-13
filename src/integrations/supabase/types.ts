@@ -70,6 +70,8 @@ export type Database = {
           limite_uso: number | null
           nome: string
           origem: string | null
+          produto_brinde: Json | null
+          produtos_requeridos: Json | null
           tipo: string
           usos: number | null
           usos_por_usuario: number | null
@@ -86,6 +88,8 @@ export type Database = {
           limite_uso?: number | null
           nome: string
           origem?: string | null
+          produto_brinde?: Json | null
+          produtos_requeridos?: Json | null
           tipo: string
           usos?: number | null
           usos_por_usuario?: number | null
@@ -102,6 +106,8 @@ export type Database = {
           limite_uso?: number | null
           nome?: string
           origem?: string | null
+          produto_brinde?: Json | null
+          produtos_requeridos?: Json | null
           tipo?: string
           usos?: number | null
           usos_por_usuario?: number | null
@@ -521,6 +527,60 @@ export type Database = {
         }
         Relationships: []
       }
+      product_events: {
+        Row: {
+          category: string | null
+          created_at: string
+          event_type: string
+          id: string
+          price: number | null
+          product_id: string
+          product_name: string
+          quantity: number | null
+          session_id: string | null
+          utm_campaign: string | null
+          utm_content: string | null
+          utm_medium: string | null
+          utm_source: string | null
+          utm_term: string | null
+          visitor_id: string | null
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          price?: number | null
+          product_id: string
+          product_name: string
+          quantity?: number | null
+          session_id?: string | null
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+          visitor_id?: string | null
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          price?: number | null
+          product_id?: string
+          product_name?: string
+          quantity?: number | null
+          session_id?: string | null
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+          visitor_id?: string | null
+        }
+        Relationships: []
+      }
       tags_rastreamento: {
         Row: {
           capi_ativo: boolean
@@ -556,34 +616,43 @@ export type Database = {
           created_at: string
           email: string | null
           firebase_id: string | null
+          first_utm_campaign: string | null
+          first_utm_source: string | null
           id: string
           last_sign_in_at: string | null
           name: string | null
           phone: string | null
           role: string | null
           user_id: string | null
+          whatsapp_auth_code: string | null
         }
         Insert: {
           created_at: string
           email?: string | null
           firebase_id?: string | null
+          first_utm_campaign?: string | null
+          first_utm_source?: string | null
           id?: string
           last_sign_in_at?: string | null
           name?: string | null
           phone?: string | null
           role?: string | null
           user_id?: string | null
+          whatsapp_auth_code?: string | null
         }
         Update: {
           created_at?: string
           email?: string | null
           firebase_id?: string | null
+          first_utm_campaign?: string | null
+          first_utm_source?: string | null
           id?: string
           last_sign_in_at?: string | null
           name?: string | null
           phone?: string | null
           role?: string | null
           user_id?: string | null
+          whatsapp_auth_code?: string | null
         }
         Relationships: []
       }
@@ -632,6 +701,24 @@ export type Database = {
           function_url: string
         }
         Returns: undefined
+      }
+      get_ltv_by_utm_campaign: {
+        Args: { end_date?: string; start_date?: string }
+        Returns: {
+          avg_ltv: number
+          customer_count: number
+          total_revenue: number
+          utm_campaign: string
+        }[]
+      }
+      get_ltv_by_utm_source: {
+        Args: { end_date?: string; start_date?: string }
+        Returns: {
+          avg_ltv: number
+          customer_count: number
+          total_revenue: number
+          utm_source: string
+        }[]
       }
       get_user_role:
         | {

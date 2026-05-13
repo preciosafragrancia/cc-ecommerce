@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { Category } from "@/types/menu";
+import { Category, POPULAR_CATEGORY_ID } from "@/types/menu";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Edit, Trash2, ArrowUp, ArrowDown } from "lucide-react";
+import { Edit, Trash2, ArrowUp, ArrowDown, Star } from "lucide-react";
 import { deleteCategory, updateCategory } from "@/services/categoryService";
 
 interface CategoryListProps {
@@ -31,6 +32,14 @@ export const CategoryList = ({
   });
 
   const handleDeleteCategory = async (categoryId: string) => {
+    if (categoryId === POPULAR_CATEGORY_ID) {
+      toast({
+        title: "Ação não permitida",
+        description: "A categoria 'Produtos Mais Vendidos' é fixa e não pode ser excluída.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!window.confirm("Tem certeza que deseja excluir esta categoria?")) {
       return;
     }
@@ -47,6 +56,24 @@ export const CategoryList = ({
       toast({
         title: "Erro",
         description: "Não foi possível excluir a categoria. Tente novamente.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleToggleVisibility = async (category: Category, visible: boolean) => {
+    try {
+      await updateCategory({ ...category, visible });
+      toast({
+        title: visible ? "Categoria exibida" : "Categoria ocultada",
+        description: `"${category.name}" agora está ${visible ? "visível" : "oculta"} no cardápio.`,
+      });
+      await onDataChange();
+    } catch (error) {
+      console.error("Erro ao alterar visibilidade:", error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível alterar a visibilidade.",
         variant: "destructive",
       });
     }
@@ -126,54 +153,76 @@ export const CategoryList = ({
               <TableRow>
                 <TableHead>Nome</TableHead>
                 <TableHead>Ordem</TableHead>
+                <TableHead>Exibir</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedCategories.map((category) => (
-                <TableRow key={category.id}>
-                  <TableCell className="font-medium">{category.name}</TableCell>
-                  <TableCell>{category.order !== undefined ? category.order : 'N/A'}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button 
-                        size="sm" 
-                        variant="ghost"
-                        onClick={() => handleReorderCategory(category, 'up')}
-                        disabled={isReordering || sortedCategories.indexOf(category) === 0}
-                      >
-                        <ArrowUp className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="ghost"
-                        onClick={() => handleReorderCategory(category, 'down')}
-                        disabled={isReordering || sortedCategories.indexOf(category) === sortedCategories.length - 1}
-                      >
-                        <ArrowDown className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        onClick={() => onEditCategory(category)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        onClick={() => handleDeleteCategory(category.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {sortedCategories.map((category) => {
+                const isPopular = category.id === POPULAR_CATEGORY_ID || category.isPopularCategory;
+                return (
+                  <TableRow key={category.id}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        {isPopular && <Star className="h-4 w-4 text-primary fill-primary" />}
+                        <span>{category.name}</span>
+                        {isPopular && (
+                          <span className="text-xs text-muted-foreground">(fixa)</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{category.order !== undefined ? category.order : 'N/A'}</TableCell>
+                    <TableCell>
+                      <Switch
+                        checked={category.visible !== false}
+                        onCheckedChange={(checked) => handleToggleVisibility(category, checked)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleReorderCategory(category, 'up')}
+                          disabled={isReordering || sortedCategories.indexOf(category) === 0}
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleReorderCategory(category, 'down')}
+                          disabled={isReordering || sortedCategories.indexOf(category) === sortedCategories.length - 1}
+                        >
+                          <ArrowDown className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onEditCategory(category)}
+                          disabled={isPopular}
+                          title={isPopular ? "Categoria fixa não pode ser renomeada" : "Editar"}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDeleteCategory(category.id)}
+                          disabled={isPopular}
+                          title={isPopular ? "Categoria fixa não pode ser excluída" : "Excluir"}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         ) : (
-          <div className="text-center py-4 text-gray-500">
+          <div className="text-center py-4 text-muted-foreground">
             Nenhuma categoria encontrada.
           </div>
         )}

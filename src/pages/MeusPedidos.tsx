@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
+import { phoneVariants } from "@/utils/phoneUtils";
 import { ptBR } from "date-fns/locale";
 
 const statusColors: Record<string, string> = {
@@ -74,14 +75,23 @@ const MeusPedidos = () => {
           return;
         }
 
+        // Gerar todas as variantes possíveis do telefone para buscar
+        // (E.164, formatado, só dígitos, etc.) – cobre dados legados.
+        const variants = phoneVariants(phone);
+        if (variants.length === 0) {
+          setLoading(false);
+          return;
+        }
+
         // Criar query para pedidos de hoje
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const todayTimestamp = Timestamp.fromDate(today);
 
+        // Firestore "in" suporta no máximo 30 valores
         const ordersQuery = query(
           collection(db, "orders"),
-          where("customerPhone", "==", phone),
+          where("customerPhone", "in", variants.slice(0, 30)),
           where("createdAt", ">=", todayTimestamp),
           orderBy("createdAt", "desc")
         );

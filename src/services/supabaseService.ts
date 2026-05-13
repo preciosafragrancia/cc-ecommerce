@@ -45,7 +45,7 @@ export async function saveUserToSupabase(user: UserProfile) {
       firebase_id: user.id, // Armazenar o ID original do Firebase
       email: user.email,
       created_at: user.created_at || new Date().toISOString(),
-      last_sign_in: user.last_sign_in || new Date().toISOString(),
+      last_sign_in_at: user.last_sign_in || new Date().toISOString(),
       name: user.name || null,
       phone: user.phone || null
     };

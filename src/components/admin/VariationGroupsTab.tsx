@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { VariationGroup, Variation } from "@/types/menu";
+import { VariationGroup, Variation, MenuItem } from "@/types/menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -10,6 +10,7 @@ import { EditVariationGroupModal } from "./EditVariationGroupModal";
 interface VariationGroupsTabProps {
   variationGroups: VariationGroup[];
   variations: Variation[];
+  menuItems: MenuItem[];
   loading: boolean;
   onDataChange: () => void;
 }
@@ -17,6 +18,7 @@ interface VariationGroupsTabProps {
 export const VariationGroupsTab = ({
   variationGroups,
   variations,
+  menuItems,
   loading,
   onDataChange,
 }: VariationGroupsTabProps) => {
@@ -122,7 +124,10 @@ export const VariationGroupsTab = ({
 
   const getVariationName = (variationId: string): string => {
     const variation = variations.find(v => v.id === variationId);
-    return variation ? variation.name : "Variação não encontrada";
+    if (variation) return variation.name;
+    const menuItem = menuItems.find(m => m.id === variationId);
+    if (menuItem) return menuItem.name;
+    return "Variação não encontrada";
   };
 
   return (
@@ -180,11 +185,15 @@ export const VariationGroupsTab = ({
                   <div className="mt-3">
                     <p className="text-sm font-semibold mb-1">Variações:</p>
                     <div className="flex flex-wrap gap-1">
-                      {(group.variations && group.variations.length > 0) ? group.variations.map(varId => (
-                        <span key={varId} className="inline-block bg-gray-200 rounded-full px-2 py-1 text-xs">
-                          {getVariationName(varId)}
-                        </span>
-                      )) : (
+                      {(group.variations && group.variations.length > 0) ? 
+                        group.variations
+                          .map(varId => ({ id: varId, name: getVariationName(varId) }))
+                          .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: 'base' }))
+                          .map(({ id, name }) => (
+                            <span key={id} className="inline-block bg-gray-200 rounded-full px-2 py-1 text-xs">
+                              {name}
+                            </span>
+                          )) : (
                         <span className="text-xs text-gray-500">Nenhuma variação selecionada</span>
                       )}
                     </div>
@@ -242,6 +251,7 @@ export const VariationGroupsTab = ({
           editVariationGroup={editVariationGroup}
           setEditVariationGroup={setEditVariationGroup}
           variations={variations}
+          menuItems={menuItems}
           variationGroups={cleanVariationGroups.groups}
           onSuccess={onDataChange}
         />

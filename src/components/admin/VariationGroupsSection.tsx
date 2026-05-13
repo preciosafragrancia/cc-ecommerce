@@ -15,6 +15,7 @@ interface VariationGroupsSectionProps {
   variationGroups: VariationGroup[];
   pizzaBorders?: PizzaBorder[];
   onDataChange?: () => void;
+  menuItems?: MenuItem[];
 }
 
 type SectionItem =
@@ -28,6 +29,7 @@ export const VariationGroupsSection = ({
   variationGroups,
   pizzaBorders = [],
   onDataChange,
+  menuItems = [],
 }: VariationGroupsSectionProps) => {
   const [tempVariationGroup, setTempVariationGroup] = useState<VariationGroup | null>(null);
 
@@ -147,12 +149,17 @@ export const VariationGroupsSection = ({
 
   const getVariationName = (variationId: string): string => {
     const variation = variations.find(v => v.id === variationId);
-    return variation ? variation.name : "Variação não encontrada";
+    if (variation) return variation.name;
+    const menuItem = menuItems.find(m => m.id === variationId);
+    if (menuItem) return menuItem.name;
+    return "Variação não encontrada";
   };
 
   const getVariationPrice = (variationId: string): number => {
     const variation = variations.find(v => v.id === variationId);
-    return variation?.additionalPrice || 0;
+    if (variation) return variation.additionalPrice || 0;
+    const menuItem = menuItems.find(m => m.id === variationId);
+    return menuItem?.price || 0;
   };
 
   return (
@@ -307,13 +314,46 @@ export const VariationGroupsSection = ({
                 <div className="mt-2">
                   <p className="text-sm font-semibold">Variações:</p>
                   <div className="grid grid-cols-1 gap-2 mt-1">
-                    {group.variations.map(varId => {
+                    {group.variations.map((varId, vIdx) => {
                       const price = getVariationPrice(varId);
                       const name = getVariationName(varId);
-                      
+                      const moveVariation = (direction: "up" | "down") => {
+                        const newIdx = direction === "up" ? vIdx - 1 : vIdx + 1;
+                        if (newIdx < 0 || newIdx >= group.variations.length) return;
+                        const newVars = [...group.variations];
+                        [newVars[vIdx], newVars[newIdx]] = [newVars[newIdx], newVars[vIdx]];
+                        const newGroups = [...(editItem.variationGroups || [])];
+                        newGroups[index] = { ...group, variations: newVars };
+                        setEditItem({ ...editItem, variationGroups: newGroups });
+                      };
                       return (
                         <div key={varId} className="flex items-center justify-between bg-white rounded px-3 py-2 border">
-                          <span className="text-sm font-medium">{name}</span>
+                          <div className="flex items-center gap-2">
+                            <div className="flex flex-col">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => moveVariation("up")}
+                                disabled={vIdx === 0}
+                                className="h-5 w-5 p-0"
+                                title="Mover para cima"
+                              >
+                                <ChevronUp className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => moveVariation("down")}
+                                disabled={vIdx === group.variations.length - 1}
+                                className="h-5 w-5 p-0"
+                                title="Mover para baixo"
+                              >
+                                <ChevronDown className="h-3 w-3" />
+                              </Button>
+                            </div>
+                            <span className="text-xs text-muted-foreground w-5">#{vIdx + 1}</span>
+                            <span className="text-sm font-medium">{name}</span>
+                          </div>
                           <span className="text-sm font-semibold text-green-600">
                             {price > 0 ? `+${formatCurrency(price)}` : 'Grátis'}
                           </span>

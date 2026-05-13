@@ -33,8 +33,12 @@ import { formatCurrency } from "@/lib/utils";
 import ProductVariationDialog from "@/components/ProductVariationDialog";
 import { getAllVariations } from "@/services/variationService";
 import { CartItem, MenuItem, Variation, SelectedVariationGroup, PizzaBorder } from "@/types/menu";
-import { trackPurchase, trackUpdateCheckoutQuantity } from "@/utils/trackingEvents";
+import { trackPurchase, trackUpdateCheckoutQuantity, trackAbandonedCart, trackCheckoutFinalize } from "@/utils/trackingEvents";
 import { getUtmParams } from "@/utils/utmCapture";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { phoneDigits as toPhoneDigits } from "@/utils/phoneUtils";
+import { withComunicacaoMeta } from "@/utils/webhookPayload";
+import CouponField from "@/components/CouponField";
 
 const Checkout = () => {
   const { cartItems, cartTotal, clearCart, removeFromCart, updateCartItemByIndex, appliedCoupon, discountAmount, finalTotal } = useCart();
@@ -79,45 +83,86 @@ const Checkout = () => {
   
   const numberInputRef = useRef<HTMLInputElement>(null);
 
+  // Estado para detecção/atualização de número de telefone
+  const [originalRegisteredPhone, setOriginalRegisteredPhone] = useState<string>("");
+  const [phoneChangeDialogOpen, setPhoneChangeDialogOpen] = useState(false);
+  const [otpDialogOpen, setOtpDialogOpen] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const pendingSubmitRef = useRef<null | (() => void)>(null);
+
+  // Marca o instante em que o checkout foi aberto (para medir tempo até finalizar)
+  const checkoutStartRef = useRef<number>(Date.now());
+  const abandonedFiredRef = useRef<boolean>(false);
+  const finalizedRef = useRef<boolean>(false);
+
+  // Dispara "abandoned_cart" após o tempo configurado em "tempo_disparo_abandoned_cart" (minutos). Padrão: 25 min
+  const [abandonMs, setAbandonMs] = useState<number>(25 * 60 * 1000);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("configuracoes")
+          .select("valor")
+          .eq("chave", "tempo_disparo_abandoned_cart")
+          .maybeSingle();
+        const minutes = parseFloat(data?.valor || "");
+        if (!isNaN(minutes) && minutes > 0) setAbandonMs(minutes * 60 * 1000);
+      } catch {}
+    })();
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (finalizedRef.current || abandonedFiredRef.current) return;
+      if (cartItems.length === 0) return;
+      abandonedFiredRef.current = true;
+      try {
+        trackAbandonedCart([...cartItems], finalTotal);
+        import("@/utils/abandonedCartWebhook").then(({ fireAbandonedCartWebhook }) => {
+          fireAbandonedCartWebhook(currentUser);
+        });
+      } catch (e) {
+        console.error("Erro ao disparar abandoned_cart:", e);
+      }
+    }, abandonMs);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abandonMs]);
+
   // Preencher dados automaticamente se o usuário estiver logado
   useEffect(() => {
     const loadUserData = async () => {
-      if (currentUser) {
-        // Carregar dados do perfil do usuário do Supabase
-        try {
-          const { data: profile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('firebase_id', currentUser.uid)
-            .single();
-            
-          if (profile) {
-            setCustomerName(profile.name || currentUser.displayName || "");
-            setCustomerPhone(profile.phone || currentUser.phoneNumber || "");
-            
-            // Buscar dados de endereço salvos automaticamente
-            const phone = profile.phone || currentUser.phoneNumber;
-            if (phone) {
-              await loadSavedCustomerData(phone);
-            }
-          } else {
-            // Se não tem perfil no Supabase, usar dados do Firebase Auth
-            setCustomerName(currentUser.displayName || "");
-            setCustomerPhone(currentUser.phoneNumber || "");
-            
-            if (currentUser.phoneNumber) {
-              await loadSavedCustomerData(currentUser.phoneNumber);
-            }
-          }
-        } catch (error) {
-          console.error("Erro ao carregar dados do usuário:", error);
-          // Fallback para dados do Firebase Auth
-          setCustomerName(currentUser.displayName || "");
-          setCustomerPhone(currentUser.phoneNumber || "");
-          
-          if (currentUser.phoneNumber) {
-            await loadSavedCustomerData(currentUser.phoneNumber);
-          }
+      if (!currentUser) return;
+
+      try {
+        const { data: profile } = await supabase
+          .from('users')
+          .select('*')
+          .eq('firebase_id', currentUser.uid)
+          .maybeSingle();
+
+        const rawPhone =
+          profile?.phone || currentUser.phoneNumber || "";
+        const displayName =
+          profile?.name || currentUser.displayName || "";
+
+        setCustomerName(displayName);
+        setCustomerPhone(rawPhone ? formatPhoneWithCountryCode(rawPhone) : "+55 ");
+        setOriginalRegisteredPhone(rawPhone || "");
+
+        if (rawPhone) {
+          await loadSavedCustomerData(rawPhone);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar dados do usuário:", error);
+        setCustomerName(currentUser.displayName || "");
+        const rawPhone = currentUser.phoneNumber || "";
+        setCustomerPhone(rawPhone ? formatPhoneWithCountryCode(rawPhone) : "+55 ");
+        setOriginalRegisteredPhone(rawPhone || "");
+        if (rawPhone) {
+          await loadSavedCustomerData(rawPhone);
         }
       }
     };
@@ -165,12 +210,48 @@ const Checkout = () => {
     }
   };
 
+  const formatPhoneWithCountryCode = (raw: string) => {
+    // Sempre garante prefixo 55
+    let digits = raw.replace(/\D/g, "");
+    if (!digits.startsWith("55")) {
+      digits = "55" + digits;
+    }
+    // Limita a 13 dígitos (55 + DDD2 + 9 dígitos)
+    digits = digits.slice(0, 13);
+
+    const country = digits.slice(0, 2);
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+
+    let formatted = `+${country}`;
+    if (ddd) formatted += ` (${ddd}`;
+    if (ddd.length === 2) formatted += ")";
+    if (rest.length > 0) {
+      if (rest.length <= 4) {
+        formatted += ` ${rest}`;
+      } else if (rest.length <= 8) {
+        // fixo: 4-4
+        formatted += ` ${rest.slice(0, 4)}-${rest.slice(4)}`;
+      } else {
+        // mobile: 5-4
+        formatted += ` ${rest.slice(0, 5)}-${rest.slice(5, 9)}`;
+      }
+    }
+    return formatted;
+  };
+
   const handlePhoneChange = async (value: string) => {
-    setCustomerPhone(value);
-    
-    // Buscar dados do cliente quando o telefone tiver 10 ou 11 dígitos
-    const cleanPhone = value.replace(/\D/g, '');
-    if (cleanPhone.length >= 11) {
+    const formatted = formatPhoneWithCountryCode(value);
+    setCustomerPhone(formatted);
+
+    // Buscar dados do cliente apenas quando o telefone estiver completo:
+    // - 13 dígitos se o primeiro dígito do número (após 55+DD) for 9 (mobile)
+    // - 12 dígitos caso contrário (fixo)
+    const cleanPhone = formatted.replace(/\D/g, '');
+    const firstSubscriberDigit = cleanPhone.charAt(4); // 55 + DD + [X]
+    const isMobile = firstSubscriberDigit === "9";
+    const complete = isMobile ? cleanPhone.length === 13 : cleanPhone.length === 12;
+    if (complete) {
       setPhoneLoading(true);
       try {
         const customerData = await getCustomerByPhone(value);
@@ -335,7 +416,51 @@ const Checkout = () => {
 
 const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
+
+  // Validação do telefone: código país 55 + DDD (2) + número (8 fixo / 9 mobile)
+  // Se o primeiro dígito após o DDD for 9, é mobile e exige 13 dígitos no total
+  const phoneDigits = customerPhone.replace(/\D/g, "");
+  const isValidLength = phoneDigits.length === 12 || phoneDigits.length === 13;
+  const firstSubscriberDigit = phoneDigits.charAt(4); // 55 + DD + [X]
+  const isMobileStart = firstSubscriberDigit === "9";
+  const mobileOk = !isMobileStart || phoneDigits.length === 13;
+
+  if (!phoneDigits.startsWith("55") || !isValidLength || !mobileOk) {
+    toast({
+      title: "Telefone inválido",
+      description: isMobileStart && phoneDigits.length !== 13
+        ? "Números de celular (iniciados com 9) devem ter 13 dígitos. Ex: +55 (11) 91234-5678"
+        : "Informe um número de WhatsApp brasileiro válido com DDD. Ex: +55 (11) 91234-5678",
+      variant: "destructive",
+    });
+    return;
+  }
+
+  // Se o usuário está logado e mudou o número, pedir confirmação antes de prosseguir
+  if (currentUser && originalRegisteredPhone) {
+    const originalDigits = toPhoneDigits(originalRegisteredPhone).replace(/^55/, "");
+    const currentDigits = phoneDigits.replace(/^55/, "");
+    if (originalDigits && currentDigits && originalDigits !== currentDigits) {
+      pendingSubmitRef.current = () => { void proceedWithOrder(); };
+      setPhoneChangeDialogOpen(true);
+      return;
+    }
+  }
+
+  await proceedWithOrder();
+};
+
+const proceedWithOrder = async () => {
   setIsLoading(true);
+
+  // Mede o tempo entre abrir o checkout e clicar em finalizar
+  try {
+    const durationMs = Date.now() - checkoutStartRef.current;
+    finalizedRef.current = true;
+    trackCheckoutFinalize([...cartItems], finalTotal, durationMs);
+  } catch (e) {
+    console.error("Erro ao rastrear checkout_finalize:", e);
+  }
 
   try {
     const fullAddress = `${street}, ${number}${complement ? `, ${complement}` : ""} - ${neighborhood}, ${city} - ${state}`;
@@ -535,6 +660,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     });
 
     navigate("/");
+    window.scrollTo({ top: 0, behavior: "auto" });
   } catch (error) {
     console.error("Erro ao criar pedido:", error);
     toast({
@@ -545,7 +671,164 @@ const handleSubmit = async (e: React.FormEvent) => {
   } finally {
     setIsLoading(false);
   }
-};
+  };
+
+  // === Atualização de número de telefone do cadastro ===
+
+  const triggerWhatsappAuthWebhook = async (phone: string) => {
+    try {
+      const { data } = await supabase
+        .from("configuracoes")
+        .select("valor")
+        .eq("chave", "webhook_autenticacao")
+        .maybeSingle();
+      const url = data?.valor;
+      if (!url) {
+        console.warn("Webhook de autenticação não configurado.");
+        return false;
+      }
+      // Busca o id interno do usuário (tabela users) pelo firebase_id
+      let userIdDb: string | null = null;
+      if (currentUser?.uid) {
+        const { data: u } = await supabase
+          .from("users")
+          .select("id")
+          .eq("firebase_id", currentUser.uid)
+          .maybeSingle();
+        userIdDb = (u as any)?.id || null;
+      }
+      const enriched = await withComunicacaoMeta({
+        phone,
+        phone_cadastrado: originalRegisteredPhone || null,
+        user_id: userIdDb,
+        firebase_id: currentUser?.uid || null,
+      });
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(enriched),
+      });
+      return true;
+    } catch (err) {
+      console.error("Erro ao acionar webhook de autenticação:", err);
+      return false;
+    }
+  };
+
+  const updateRegisteredPhone = async (newPhone: string) => {
+    if (!currentUser) return;
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({ phone: newPhone })
+        .eq("firebase_id", currentUser.uid);
+      if (error) console.error("Erro ao atualizar telefone do usuário:", error);
+    } catch (e) {
+      console.error("Erro ao atualizar telefone:", e);
+    }
+  };
+
+  const handleConfirmPhoneChange = async () => {
+    setPhoneChangeDialogOpen(false);
+    // Verifica se a verificação por WhatsApp está habilitada
+    const { data: toggleData } = await supabase
+      .from("configuracoes")
+      .select("valor")
+      .eq("chave", "whatsapp_verification_enabled")
+      .maybeSingle();
+    const verificationEnabled = toggleData?.valor !== "false";
+
+    if (!verificationEnabled) {
+      // Atualiza direto e prossegue
+      await updateRegisteredPhone(customerPhone);
+      setOriginalRegisteredPhone(customerPhone);
+      toast({ title: "Número atualizado", description: "Seu WhatsApp foi atualizado no cadastro." });
+      const next = pendingSubmitRef.current;
+      pendingSubmitRef.current = null;
+      next?.();
+      return;
+    }
+
+    // Aciona webhook e abre OTP
+    setSendingOtp(true);
+    setOtpCode("");
+    setOtpError("");
+    const ok = await triggerWhatsappAuthWebhook(customerPhone);
+    setSendingOtp(false);
+    if (ok) {
+      toast({ title: "Código enviado", description: "Enviamos um código de verificação para o seu WhatsApp." });
+    } else {
+      toast({
+        title: "Atenção",
+        description: "Não foi possível enviar o código. Verifique a configuração do webhook.",
+        variant: "destructive",
+      });
+    }
+    setOtpDialogOpen(true);
+  };
+
+  const handleCancelPhoneChange = () => {
+    setPhoneChangeDialogOpen(false);
+    // Restaurar número original e prosseguir com pedido
+    setCustomerPhone(formatPhoneWithCountryCode(originalRegisteredPhone));
+    const next = pendingSubmitRef.current;
+    pendingSubmitRef.current = null;
+    // Pequeno timeout para garantir o setState antes do submit
+    setTimeout(() => next?.(), 0);
+  };
+
+  const handleVerifyOtp = async () => {
+    setOtpError("");
+    if (!otpCode.trim()) {
+      setOtpError("Digite o código enviado para seu WhatsApp.");
+      return;
+    }
+    setVerifyingOtp(true);
+    try {
+      // Procura o código pelo id do usuário logado
+      if (!currentUser?.uid) {
+        setOtpError("Usuário não identificado. Faça login novamente.");
+        setVerifyingOtp(false);
+        return;
+      }
+      const { data, error: dbError } = await supabase
+        .from("users")
+        .select("whatsapp_auth_code, id")
+        .eq("firebase_id", currentUser.uid)
+        .maybeSingle();
+
+      if (dbError) throw dbError;
+
+      const normalizedInput = otpCode.trim().toUpperCase();
+      const savedCode = (data as any)?.whatsapp_auth_code?.trim().toUpperCase();
+      if (savedCode && savedCode === normalizedInput) {
+        await updateRegisteredPhone(customerPhone);
+        setOriginalRegisteredPhone(customerPhone);
+        setOtpDialogOpen(false);
+        toast({
+          title: "WhatsApp confirmado!",
+          description: "Seu número foi atualizado no cadastro com sucesso.",
+        });
+        const next = pendingSubmitRef.current;
+        pendingSubmitRef.current = null;
+        next?.();
+      } else {
+        setOtpError("Código inválido. Verifique e tente novamente.");
+      }
+    } catch (err) {
+      setOtpError("Não foi possível validar o código. Tente novamente.");
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setSendingOtp(true);
+    setOtpError("");
+    const ok = await triggerWhatsappAuthWebhook(customerPhone);
+    setSendingOtp(false);
+    if (ok) toast({ title: "Código reenviado", description: "Verifique seu WhatsApp." });
+  };
 
 
   const handleEditItem = async (index: number) => {
@@ -558,9 +841,10 @@ const handleSubmit = async (e: React.FormEvent) => {
 
       const groupVars: { [groupId: string]: Variation[] } = {};
       for (const group of item.variationGroups!) {
-        groupVars[group.id] = allVariations.filter(
-          (v) => v.available && group.variations.includes(v.id)
-        );
+        // Respect the order defined in group.variations
+        groupVars[group.id] = group.variations
+          .map(varId => allVariations.find(v => v.id === varId))
+          .filter((v): v is Variation => !!v && v.available);
       }
       setEditGroupVariations(groupVars);
       setEditingItemIndex(index);
@@ -609,6 +893,9 @@ const handleSubmit = async (e: React.FormEvent) => {
   };
 
   if (cartItems.length === 0) {
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
     return (
       <div className="container mx-auto px-4 py-8">
         <Card>
@@ -638,9 +925,15 @@ const handleSubmit = async (e: React.FormEvent) => {
                 <Input
                   id="customerPhone"
                   type="tel"
+                  inputMode="tel"
+                  placeholder="+55 (11) 91234-5678"
                   value={customerPhone}
+                  onFocus={() => {
+                    if (!customerPhone) setCustomerPhone("+55 ");
+                  }}
                   onChange={(e) => handlePhoneChange(e.target.value)}
                   disabled={phoneLoading}
+                  maxLength={20}
                   required
                 />
                 {phoneLoading && <p className="text-sm text-gray-500 mt-1">Buscando dados...</p>}
@@ -807,7 +1100,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                           return (baseUnitPrice * item.quantity).toFixed(2);
                         })()}
                       </div>
-                      {item.hasVariations && item.variationGroups && item.variationGroups.length > 0 && (
+                      {!(item as any).__couponGiftId && item.hasVariations && item.variationGroups && item.variationGroups.length > 0 && (
                         <button
                           type="button"
                           onClick={() => handleEditItem(index)}
@@ -817,14 +1110,16 @@ const handleSubmit = async (e: React.FormEvent) => {
                           <Pencil className="h-4 w-4" />
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setItemToDelete(item.id)}
-                        className="text-muted-foreground hover:text-destructive transition-colors p-1"
-                        title="Remover item"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {!(item as any).__couponGiftId && (
+                        <button
+                          type="button"
+                          onClick={() => setItemToDelete(item.id)}
+                          className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                          title="Remover item"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -930,7 +1225,11 @@ const handleSubmit = async (e: React.FormEvent) => {
               ))}
               
               <Separator />
-              
+
+              <CouponField />
+
+              <Separator />
+
               <div className="space-y-2">
                 <div className="flex justify-between text-md">
                   <span>Subtotal:</span>
@@ -1032,6 +1331,66 @@ const handleSubmit = async (e: React.FormEvent) => {
           confirmLabel="Atualizar item"
         />
       )}
+
+      {/* Dialog: confirmar atualização do número cadastrado */}
+      <AlertDialog open={phoneChangeDialogOpen} onOpenChange={setPhoneChangeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Atualizar número de WhatsApp?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O número informado <strong>{customerPhone}</strong> é diferente do que está no seu cadastro
+              {originalRegisteredPhone ? <> (<strong>{formatPhoneWithCountryCode(originalRegisteredPhone)}</strong>)</> : null}.
+              Deseja atualizar o seu cadastro com este novo número?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelPhoneChange}>
+              Não, manter o atual
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmPhoneChange}>
+              Sim, atualizar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog: verificação por WhatsApp (OTP) */}
+      <Dialog open={otpDialogOpen} onOpenChange={(open) => { if (!verifyingOtp) setOtpDialogOpen(open); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Verificação por WhatsApp</DialogTitle>
+            <DialogDescription>
+              Enviamos um código de verificação para <strong>{customerPhone}</strong>.
+              Digite o código abaixo para confirmar a atualização do seu número.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Código de verificação"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value)}
+              autoFocus
+            />
+            {otpError && <p className="text-sm text-destructive">{otpError}</p>}
+            <button
+              type="button"
+              onClick={handleResendOtp}
+              disabled={sendingOtp}
+              className="text-sm text-primary hover:underline disabled:opacity-50"
+            >
+              {sendingOtp ? "Enviando..." : "Reenviar código"}
+            </button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOtpDialogOpen(false)} disabled={verifyingOtp}>
+              Cancelar
+            </Button>
+            <Button onClick={handleVerifyOtp} disabled={verifyingOtp}>
+              {verifyingOtp ? "Validando..." : "Confirmar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
